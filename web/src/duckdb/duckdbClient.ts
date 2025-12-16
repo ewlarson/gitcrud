@@ -134,6 +134,184 @@ export async function queryResources(): Promise<Resource[]> {
   }
 }
 
+export interface SearchResult {
+  resources: Resource[];
+  total: number;
+}
+
+export async function searchResources(
+  page: number = 1,
+  pageSize: number = 10,
+  sortBy: string = "id",
+  sortOrder: "asc" | "desc" = "asc",
+  search: string = ""
+): Promise<SearchResult> {
+  let conn: any = null;
+  try {
+    const ctx = await getDuckDbContext();
+    if (!ctx || !ctx.db) return { resources: [], total: 0 };
+    conn = await (ctx.db as any).connect();
+
+    const tablesResult = await conn.query("SHOW TABLES");
+    const tables = tablesResult.toArray().map((row: any) => row.name);
+    if (!tables.includes("resources")) return { resources: [], total: 0 };
+
+    // Sanitize sort column to prevent SQL injection
+    const allowedSorts = ["id", "dct_title_s", "gbl_resourceClass_sm", "dct_accessRights_s", "gbl_mdVersion_s"];
+    const safeSort = allowedSorts.includes(sortBy) ? sortBy : "id";
+    const safeOrder = sortOrder === "desc" ? "DESC" : "ASC";
+
+    // Build WHERE clause
+    let whereClause = "1=1";
+    const params: any[] = [];
+    if (search) {
+      whereClause += ` AND (
+        id ILIKE ? OR 
+        dct_title_s ILIKE ? OR 
+        list_contains(gbl_resourceClass_sm, ?) OR
+        dct_description_sm::TEXT ILIKE ?
+      )`;
+      const s = `%${search}%`;
+      // For list_contains, we might need an exact match or handle it differently.
+      // But DuckDB's list_contains expects (list, element). 
+      // For loose search, checking if cast to text contains string is easier but hacky.
+      // Let's stick to text search for simplicity on lists for now.
+      params.push(s, s, search, s);
+    }
+
+    // Get Total Count
+    // Note: Parameterized queries in where clause need to be handled carefully.
+    // The current DuckDB WASM prepare implementation might have quirks.
+    // Let's rely on simple string interpolation for the count for now if prepare fails, 
+    // but try prepare first.
+
+    // Actually, let's construct the SQL safely.
+    // We already sanitized sort. Search string needs binding.
+
+    // count
+    // We need to inject the params into the query manually or use prepare if we can iterate results.
+    // But for a single scalar result (count), prepare + query returns a result we can read.
+
+    const countSql = `SELECT COUNT(*) as total FROM resources WHERE ${whereClause.replace(/\?/g, `'${search.replace(/'/g, "''")}'`).replace("list_contains(gbl_resourceClass_sm, ?)", `list_contains(gbl_resourceClass_sm, '${search.replace(/'/g, "''")}')`).replace(/%\?/g, `'%${search.replace(/'/g, "''")}%'`).replace(/\?%/g, `'%${search.replace(/'/g, "''")}%'`)}`;
+
+    // Simplification: We'll do client-side filtering logic if parameter binding is too complex for this specific "search all fields" logic 
+    // OR we just use string injection escaping carefully.
+    // Let's try to use the binding properly but the query complexity with '?' is high.
+    // Let's switch to a simpler approach: 
+    // Just construct the query string with basic escaping for the prototype.
+    const safeSearch = search.replace(/'/g, "''");
+    const searchSqlCondition = search ? `
+      AND (
+        id ILIKE '%${safeSearch}%' OR 
+        dct_title_s ILIKE '%${safeSearch}%' OR 
+        list_contains(gbl_resourceClass_sm, '${safeSearch}') OR
+        array_to_string(dct_description_sm, ' ') ILIKE '%${safeSearch}%'
+      )
+    ` : "";
+
+    const totalRes = await conn.query(`SELECT COUNT(*) as total FROM resources WHERE 1=1 ${searchSqlCondition}`);
+    const total = Number(totalRes.toArray()[0].total);
+
+    // Get Page
+    const offset = (page - 1) * pageSize;
+    const dataSql = `
+      SELECT * FROM resources 
+      WHERE 1=1 ${searchSqlCondition}
+      ORDER BY "${safeSort}" ${safeOrder}
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const resourcesResult = await conn.query(dataSql);
+    const resourceRows = resourcesResult.toArray().map((row: any) => {
+      const r = row.toJSON ? row.toJSON() : row;
+      const obj: Record<string, string> = {};
+      for (const key of Object.keys(r)) {
+        obj[key] = r[key] ?? "";
+      }
+      return obj;
+    });
+
+    // We need distributions for these resources? 
+    // For the list view, we might not need them, but the Resource model requires them?
+    // The Resource interface doesn't actually require distributions in the strict sense 
+    // (they are not in the Interface of Resource, they are passed to resourceFromRow separately).
+    // Wait, Resource interface DOES NOT have distributions. 
+    // resourceFromRow takes (row, dists). 
+    // Let's confirm if we need them.
+    // The list view likely doesn't show distributions. We can pass empty array.
+
+    const resources: Resource[] = resourceRows.map((row: any) => resourceFromRow(row, []));
+
+    return { resources, total };
+  } catch (err) {
+    console.warn("DuckDB search failed", err);
+    return { resources: [], total: 0 };
+  } finally {
+    try {
+      await conn?.close?.();
+    } catch {
+      // Ignore close errors
+    }
+  }
+}
+
+export async function getDistinctValues(
+  column: string,
+  search: string = "",
+  limit: number = 20
+): Promise<string[]> {
+  let conn: any = null;
+  try {
+    const ctx = await getDuckDbContext();
+    if (!ctx || !ctx.db) return [];
+    conn = await (ctx.db as any).connect();
+
+    // Check if table exists
+    const tablesResult = await conn.query("SHOW TABLES");
+    const tables = tablesResult.toArray().map((row: any) => row.name);
+    if (!tables.includes("resources")) return [];
+
+    // Safe column check (basic SQL injection prevention for field names)
+    // We only allow alphanumeric + underscore
+    if (!/^[a-zA-Z0-9_]+$/.test(column)) {
+      console.warn("Invalid column name for distinct values", column);
+      return [];
+    }
+
+    // Query distinct values by splitting pipe-delimited strings
+    // We use unnest(string_split(column, '|')) to get individual values
+    // Then trim whitespace and filter empty
+    const sql = `
+      WITH split_values AS (
+        SELECT unnest(string_split("${column}", '|')) as val
+        FROM resources
+        WHERE "${column}" IS NOT NULL AND "${column}" != ''
+      )
+      SELECT DISTINCT trim(val) as val 
+      FROM split_values 
+      WHERE val ILIKE ? AND val != ''
+      ORDER BY val 
+      LIMIT ?
+    `;
+
+    const stmt = await conn.prepare(sql);
+    const result = await stmt.query(`%${search}%`, limit);
+    const rows = result.toArray();
+    await stmt.close();
+
+    return rows.map((r: any) => String(r.val));
+  } catch (err) {
+    console.warn(`Failed to get distinct values for ${column}`, err);
+    return [];
+  } finally {
+    try {
+      await conn?.close?.();
+    } catch {
+      // Ignore close
+    }
+  }
+}
+
 export async function queryResourceById(id: string): Promise<Resource | null> {
   let conn: any = null;
   try {

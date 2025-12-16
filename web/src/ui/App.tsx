@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Resource, resourceFromJson, resourceToJson } from "../aardvark/model";
+import { Resource, resourceFromJson, resourceToJson, REPEATABLE_STRING_FIELDS } from "../aardvark/model";
 import {
   GithubClient,
   ProjectConfig,
@@ -12,140 +12,11 @@ import { buildResourcesCsv, buildDistributionsCsv } from "../aardvark/tabular";
 import { flattenResource, extractDistributionsFromJson } from "../aardvark/mapping";
 import { getDuckDbContext, queryResources, queryResourceById, exportDuckDbToBlob } from "../duckdb/duckdbClient";
 import { TabularEditor } from "./TabularEditor";
+import { TagInput } from "./TagInput";
+import { ResourceList } from "./ResourceList";
 
 const TOKEN_STORAGE_KEY = "aardvark-github-token"; // Now using localStorage
 
-// Resource list table component that queries DuckDB
-const ResourceListTable: React.FC<{
-  selectedId: string | null;
-  project: ProjectConfig | null;
-  isLoadingData: boolean;
-  onSelectResource: (resource: Resource) => void;
-  onRefresh: () => void;
-}> = ({ selectedId, project, isLoadingData, onSelectResource, onRefresh }) => {
-  const [resources, setResources] = useState<Resource[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    if (project && !isLoadingData) {
-      // Reload when project connects and data loading is complete
-      // Add a small delay to ensure DuckDB is ready
-      const timer = setTimeout(() => {
-        loadResources();
-      }, 100);
-      return () => clearTimeout(timer);
-    } else if (!project) {
-      // Clear resources when project is disconnected
-      setResources([]);
-      setIsLoading(false);
-    }
-  }, [project, isLoadingData, selectedId]); // Refresh when project, loading state, or selection changes
-
-  async function loadResources() {
-    if (!project) {
-      // In anonymous mode, just query duckdb directly
-      // We assume DuckDB is already populated from parquet
-      try {
-        const res = await queryResources();
-        setResources(res);
-        onRefresh();
-      } catch {
-        setResources([]);
-      }
-      setIsLoading(false);
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const res = await queryResources();
-      if (res.length === 0) {
-        // If DuckDB is empty, try loading from localStorage fallback
-        const fallback = localStorage.getItem(`aardvark-resources-${project.owner}-${project.repo}`);
-        if (fallback) {
-          try {
-            const parsed = JSON.parse(fallback) as Resource[];
-            setResources(parsed);
-            onRefresh();
-            setIsLoading(false);
-            return;
-          } catch {
-            // Invalid fallback data, continue with empty
-          }
-        }
-      }
-      setResources(res);
-      onRefresh(); // Update count
-    } catch (err) {
-      console.error("Failed to load resources from DuckDB", err);
-      // Try fallback
-      const fallback = localStorage.getItem(`aardvark-resources-${project.owner}-${project.repo}`);
-      if (fallback) {
-        try {
-          const parsed = JSON.parse(fallback) as Resource[];
-          setResources(parsed);
-          onRefresh();
-        } catch {
-          setResources([]);
-        }
-      } else {
-        setResources([]);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="mt-3 text-xs text-slate-400">Loading resources from DuckDB...</div>
-    );
-  }
-
-  if (resources.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60">
-      <table className="min-w-full divide-y divide-slate-800 text-xs">
-        <thead className="bg-slate-900/80">
-          <tr>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400 uppercase tracking-wide text-[10px]">
-              ID
-            </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400 uppercase tracking-wide text-[10px]">
-              Title
-            </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400 uppercase tracking-wide text-[10px]">
-              Access
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800 bg-slate-900/40">
-          {resources.map((r) => (
-            <tr
-              key={r.id}
-              className={`hover:bg-slate-800/60 cursor-pointer ${selectedId === r.id ? "bg-slate-800/80" : ""
-                }`}
-              onClick={() => onSelectResource(r)}
-            >
-              <td className="px-3 py-2 font-mono text-[11px] text-slate-200">
-                {r.id}
-              </td>
-              <td className="px-3 py-2 text-[12px] text-slate-100">
-                {r.dct_title_s}
-              </td>
-              <td className="px-3 py-2 text-[11px] text-slate-300">
-                {r.dct_accessRights_s}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
 
 async function syncDuckDbFromResources(resources: Resource[]): Promise<void> {
   try {
@@ -247,6 +118,7 @@ export const App: React.FC = () => {
   const [rememberToken, setRememberToken] = useState(false);
   const [showTabularEditor, setShowTabularEditor] = useState(false);
   const [isExportingDuckDb, setIsExportingDuckDb] = useState(false);
+  const [view, setView] = useState<"list" | "edit" | "create">("list");
 
   // Refresh resource count from DuckDB
   async function refreshResourceCount() {
@@ -480,6 +352,7 @@ export const App: React.FC = () => {
       setProject(config);
       setSelectedId(null);
       setEditing(null);
+      setView("list");
       setStatus(
         `Connected to ${config.owner}/${config.repo} @ ${config.branch}${metaStatus === "present" ? " (metadata/ found)" : " (metadata/ missing yet)"
         }`
@@ -724,681 +597,650 @@ export const App: React.FC = () => {
             </section>
           )}
 
-          <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-            <h2 className="text-base font-semibold mb-2">Resources in GitHub</h2>
-            {!project && resourceCount === 0 && (
-              <p className="text-xs text-slate-400">
-                Connect to GitHub above to load and edit your Aardvark records.
-              </p>
+          <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0">
+            {view === "list" && (
+              <ResourceList
+                project={project}
+                resourceCount={resourceCount}
+                onEdit={(id) => {
+                  if (!project) return;
+                  // Start editing
+                  // We need to fetch the full resource first or use what we need.
+                  // Since we have the ID, let's fetch it from DuckDB or find it.
+                  // Async fetch is better.
+                  (async () => {
+                    const r = await queryResourceById(id);
+                    if (r) {
+                      setEditing(r);
+                      setSelectedId(id);
+                      setView("edit");
+                      setSaveError(null);
+                    }
+                  })();
+                }}
+                onCreate={() => {
+                  setSelectedId(null);
+                  setEditing({
+                    id: "",
+                    dct_title_s: "",
+                    dct_accessRights_s: "Public",
+                    gbl_resourceClass_sm: ["Datasets"],
+                    gbl_mdVersion_s: "Aardvark",
+                    schema_provider_s: "",
+                    dct_issued_s: "",
+
+                    dct_alternative_sm: [],
+                    dct_description_sm: [],
+                    dct_language_sm: [],
+                    gbl_displayNote_sm: [],
+
+                    dct_creator_sm: [],
+                    dct_publisher_sm: [],
+
+                    gbl_resourceType_sm: [],
+                    dct_subject_sm: [],
+                    dcat_theme_sm: [],
+                    dcat_keyword_sm: [],
+
+                    dct_temporal_sm: [],
+                    gbl_dateRange_drsim: [],
+
+                    dct_spatial_sm: [],
+
+                    dct_identifier_sm: [],
+                    dct_rights_sm: [],
+                    dct_rightsHolder_sm: [],
+                    dct_license_sm: [],
+
+                    pcdm_memberOf_sm: [],
+                    dct_isPartOf_sm: [],
+                    dct_source_sm: [],
+                    dct_isVersionOf_sm: [],
+                    dct_replaces_sm: [],
+                    dct_relation_sm: [],
+
+                    extra: {},
+                  });
+                  setView("create");
+                  setSaveError(null);
+                }}
+                onRefreshProject={refreshResourceCount}
+              />
             )}
-            {(project || resourceCount > 0) && (
-              <>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="space-y-1">
-                    {isLoadingData && (
-                      <p className="text-xs text-slate-400">
-                        Loading metadata from GitHub…
-                      </p>
-                    )}
-                    {dataError && (
-                      <div className="mt-2 rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                        {dataError}
-                      </div>
-                    )}
-                    {!isLoadingData && !dataError && resourceCount === 0 && project && (
-                      <p className="text-xs text-slate-400">
-                        No Aardvark JSON files found yet in{" "}
-                        <span className="font-mono">{metadataPath}</span>. Click "New resource" below to create one.
-                      </p>
-                    )}
-                    {!isLoadingData && !dataError && resourceCount > 0 && (
-                      <p className="text-xs text-slate-400">
-                        {resourceCount} resource{resourceCount !== 1 ? "s" : ""} in DuckDB
-                        {!project && " (Read-Only View)"}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!project) {
-                          alert("Please connect to GitHub to create new resources.");
-                          return;
-                        }
-                        setSelectedId(null);
-                        setEditing({
-                          id: "",
-                          dct_title_s: "",
-                          dct_accessRights_s: "Public",
-                          gbl_resourceClass_sm: ["Datasets"],
-                          gbl_mdVersion_s: "Aardvark",
-                          schema_provider_s: "",
-                          dct_issued_s: "",
 
-                          dct_alternative_sm: [],
-                          dct_description_sm: [],
-                          dct_language_sm: [],
-                          gbl_displayNote_sm: [],
+            {(view === "edit" || view === "create") && editing && (
+              <div className="flex flex-col lg:flex-row gap-6 items-start h-full">
+                {/* Table of Contents Sidebar */}
+                <aside className="w-full lg:w-48 flex-shrink-0 lg:sticky lg:top-4">
+                  <button
+                    onClick={() => {
+                      setView("list");
+                      setEditing(null);
+                      setSelectedId(null);
+                    }}
+                    className="mb-4 flex items-center gap-2 text-xs text-slate-400 hover:text-white"
+                  >
+                    ← Back to list
+                  </button>
+                  <nav className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-1 max-h-[calc(100vh-200px)] overflow-y-auto">
+                    <h3 className="mb-3 text-xs font-semibold text-slate-400 uppercase tracking-wider px-2">
+                      Sections
+                    </h3>
+                    {[
+                      { id: "section-required", label: "Required" },
+                      { id: "section-identification", label: "Identification" },
+                      { id: "section-credits", label: "Credits" },
+                      { id: "section-categories", label: "Categories" },
+                      { id: "section-temporal", label: "Temporal" },
+                      { id: "section-spatial", label: "Spatial" },
+                      { id: "section-administrative", label: "Administrative" },
+                      { id: "section-object", label: "Object" },
+                      { id: "section-relations", label: "Relations" },
+                    ].map((item) => (
+                      <a
+                        key={item.id}
+                        href={`#${item.id}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          document.getElementById(item.id)?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          });
+                        }}
+                        className="block rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+                      >
+                        {item.label}
+                      </a>
+                    ))}
+                  </nav>
+                </aside>
 
-                          dct_creator_sm: [],
-                          dct_publisher_sm: [],
+                {/* Main Form Area */}
+                <div className="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/60 p-6">
+                  <h2 className="text-base font-semibold mb-2">
+                    {view === "edit" ? `Edit: ${editing.dct_title_s || editing.id}` : "Create New Resource"}
+                  </h2>
 
-                          gbl_resourceType_sm: [],
-                          dct_subject_sm: [],
-                          dcat_theme_sm: [],
-                          dcat_keyword_sm: [],
-
-                          dct_temporal_sm: [],
-                          gbl_dateRange_drsim: [],
-
-                          dct_spatial_sm: [],
-
-                          dct_identifier_sm: [],
-                          dct_rights_sm: [],
-                          dct_rightsHolder_sm: [],
-                          dct_license_sm: [],
-
-                          pcdm_memberOf_sm: [],
-                          dct_isPartOf_sm: [],
-                          dct_source_sm: [],
-                          dct_isVersionOf_sm: [],
-                          dct_replaces_sm: [],
-                          dct_relation_sm: [],
-
-                          extra: {},
-                        });
-                        setSaveError(null);
-                      }}
-                      className={`rounded-md px-3 py-2 text-[11px] font-medium text-white shadow-sm ${project ? "bg-emerald-500 hover:bg-emerald-400" : "bg-slate-700 cursor-not-allowed opacity-50"
-                        }`}
-                    >
-                      + New resource
-                    </button>
-                    {resourceCount > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleExportDuckDb}
-                          disabled={isExportingDuckDb || !project}
-                          className="rounded-md border border-slate-700 px-3 py-2 text-[11px] text-slate-200 hover:bg-slate-800/70 disabled:opacity-60"
-                        >
-                          {isExportingDuckDb ? "Exporting..." : "Export DuckDB"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowTabularEditor(!showTabularEditor)}
-                          className="rounded-md border border-slate-700 px-3 py-2 text-[11px] text-slate-200 hover:bg-slate-800/70"
-                        >
-                          {showTabularEditor ? "Hide" : "Show"} Tabular Editor
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <ResourceListTable
-                  selectedId={selectedId}
-                  project={project}
-                  isLoadingData={isLoadingData}
-                  onSelectResource={(resource) => {
-                    setSelectedId(resource.id);
-                    setEditing({ ...resource });
-                    setSaveError(null);
-                  }}
-                  onRefresh={refreshResourceCount}
-                />
-              </>
-            )}
-          </section>
-
-          {(project || resourceCount > 0) && showTabularEditor && (
-            <TabularEditor
-              onSelectResource={(resource) => {
-                setSelectedId(resource.id);
-                setEditing({ ...resource });
-                setSaveError(null);
-                setShowTabularEditor(false);
-              }}
-              onRefresh={refreshResourceCount}
-            />
-          )}
-
-          {project && (
-            <div className="flex flex-col lg:flex-row gap-6 items-start">
-              {/* Table of Contents Sidebar */}
-              <aside className="w-full lg:w-64 flex-shrink-0 lg:sticky lg:top-4">
-                <nav className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-1">
-                  <h3 className="mb-3 text-xs font-semibold text-slate-400 uppercase tracking-wider px-2">
-                    Sections
-                  </h3>
-                  {[
-                    { id: "section-required", label: "Required" },
-                    { id: "section-identification", label: "Identification" },
-                    { id: "section-credits", label: "Credits" },
-                    { id: "section-categories", label: "Categories" },
-                    { id: "section-temporal", label: "Temporal" },
-                    { id: "section-spatial", label: "Spatial" },
-                    { id: "section-administrative", label: "Administrative" },
-                    { id: "section-object", label: "Object" },
-                    { id: "section-relations", label: "Relations" },
-                  ].map((item) => (
-                    <a
-                      key={item.id}
-                      href={`#${item.id}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        document.getElementById(item.id)?.scrollIntoView({
-                          behavior: "smooth",
-                          block: "start",
-                        });
-                      }}
-                      className="block rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-                    >
-                      {item.label}
-                    </a>
-                  ))}
-                </nav>
-              </aside>
-
-              {/* Main Form Area */}
-              <section className="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-                <h2 className="text-base font-semibold mb-2">
-                  {editing ? (selectedId ? "Edit resource" : "New resource") : "Resource editor"}
-                </h2>
-                {!editing && (
-                  <p className="text-xs text-slate-400">
-                    Select a resource from the table above, or create a new one to begin editing.
-                  </p>
-                )}
-                {editing && (
-                  <>
-                    <form
-                      className="mt-3 text-sm"
-                      onSubmit={(e) => e.preventDefault()}
-                    >
-                      <div className="space-y-8">
-                        {/* Required Sections */}
-                        <div id="section-required" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Required</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">ID</label>
-                              <input
-                                value={editing.id}
-                                onChange={(e) => setEditing({ ...editing, id: e.target.value })}
-                                disabled={!!selectedId}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 disabled:bg-slate-900/60"
-                              />
-                            </div>
-                            <div className="lg:col-span-2">
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Title</label>
-                              <input
-                                value={editing.dct_title_s}
-                                onChange={(e) => setEditing({ ...editing, dct_title_s: e.target.value })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Resource Class (pipe-delimited)</label>
-                              <input
-                                value={editing.gbl_resourceClass_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, gbl_resourceClass_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder="Datasets | Maps"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Access Rights</label>
-                              <select
-                                value={editing.dct_accessRights_s}
-                                onChange={(e) => setEditing({ ...editing, dct_accessRights_s: e.target.value })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              >
-                                <option value="Public">Public</option>
-                                <option value="Restricted">Restricted</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Format</label>
-                              <input
-                                value={editing.dct_format_s ?? ""}
-                                onChange={(e) => setEditing({ ...editing, dct_format_s: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder="Shapefile"
-                              />
-                            </div>
+                  <form
+                    className="mt-3 text-sm"
+                    onSubmit={(e) => e.preventDefault()}
+                  >
+                    <div className="space-y-8">
+                      {/* Required Sections */}
+                      <div id="section-required" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Required</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">ID</label>
+                            <input
+                              value={editing.id}
+                              onChange={(e) => setEditing({ ...editing, id: e.target.value })}
+                              disabled={!!selectedId}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 disabled:bg-slate-900/60"
+                            />
                           </div>
-                        </div>
-
-                        {/* Identification */}
-                        <div id="section-identification" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Identification</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                            <div className="md:col-span-2">
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Description (pipe-delimited)</label>
-                              <textarea
-                                value={editing.dct_description_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_description_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                rows={3}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Alt Title (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_alternative_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_alternative_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Display Note (pipe-delimited)</label>
-                              <input
-                                value={editing.gbl_displayNote_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, gbl_displayNote_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Language (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_language_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_language_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder="eng"
-                              />
-                            </div>
+                          <div className="lg:col-span-2">
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Title</label>
+                            <input
+                              value={editing.dct_title_s}
+                              onChange={(e) => setEditing({ ...editing, dct_title_s: e.target.value })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
                           </div>
-                        </div>
-
-                        {/* Credits */}
-                        <div id="section-credits" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Credits</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Creator (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_creator_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_creator_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Publisher (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_publisher_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_publisher_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Provider</label>
-                              <input
-                                value={editing.schema_provider_s ?? ""}
-                                onChange={(e) => setEditing({ ...editing, schema_provider_s: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Resource Class (gbl_resourceClass_sm)</label>
+                            <TagInput
+                              value={editing.gbl_resourceClass_sm}
+                              onChange={(val) => setEditing({ ...editing, gbl_resourceClass_sm: val })}
+                              fieldName="gbl_resourceClass_sm"
+                              placeholder="Datasets, Maps..."
+                            />
                           </div>
-                        </div>
-
-                        {/* Categories */}
-                        <div id="section-categories" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Categories</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Resource Type (pipe-delimited)</label>
-                              <input
-                                value={editing.gbl_resourceType_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, gbl_resourceType_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Subject (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_subject_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_subject_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Theme (pipe-delimited)</label>
-                              <input
-                                value={editing.dcat_theme_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dcat_theme_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Keyword (pipe-delimited)</label>
-                              <input
-                                value={editing.dcat_keyword_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dcat_keyword_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Access Rights</label>
+                            <select
+                              value={editing.dct_accessRights_s}
+                              onChange={(e) => setEditing({ ...editing, dct_accessRights_s: e.target.value })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            >
+                              <option value="Public">Public</option>
+                              <option value="Restricted">Restricted</option>
+                            </select>
                           </div>
-                        </div>
-
-                        {/* Temporal */}
-                        <div id="section-temporal" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Temporal</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Temporal (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_temporal_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_temporal_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Date Issued</label>
-                              <input
-                                value={editing.dct_issued_s ?? ""}
-                                onChange={(e) => setEditing({ ...editing, dct_issued_s: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder="YYYY-MM-DD"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Date Range (pipe-delimited)</label>
-                              <input
-                                value={editing.gbl_dateRange_drsim.join("|")}
-                                onChange={(e) => setEditing({ ...editing, gbl_dateRange_drsim: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Spatial */}
-                        <div id="section-spatial" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Spatial</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Spatial Coverage (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_spatial_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_spatial_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Bounding Box (ENVELOPE)</label>
-                              <input
-                                value={editing.dcat_bbox ?? ""}
-                                onChange={(e) => setEditing({ ...editing, dcat_bbox: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder="ENVELOPE(-180, 180, 90, -90)"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Geometry</label>
-                              <input
-                                value={editing.locn_geometry ?? ""}
-                                onChange={(e) => setEditing({ ...editing, locn_geometry: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div className="flex items-center mt-6">
-                              <input
-                                type="checkbox"
-                                checked={editing.gbl_georeferenced_b ?? false}
-                                onChange={(e) => setEditing({ ...editing, gbl_georeferenced_b: e.target.checked })}
-                                className="mr-2 rounded border-slate-700 bg-slate-950"
-                              />
-                              <label className="block text-xs font-medium text-slate-200">Georeferenced</label>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Administrative */}
-                        <div id="section-administrative" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Administrative</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Identifier (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_identifier_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_identifier_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">WXS Identifier</label>
-                              <input
-                                value={editing.gbl_wxsIdentifier_s ?? ""}
-                                onChange={(e) => setEditing({ ...editing, gbl_wxsIdentifier_s: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Rights (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_rights_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_rights_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Rights Holder (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_rightsHolder_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_rightsHolder_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">License (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_license_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_license_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div className="flex items-center mt-6">
-                              <input
-                                type="checkbox"
-                                checked={editing.gbl_suppressed_b ?? false}
-                                onChange={(e) => setEditing({ ...editing, gbl_suppressed_b: e.target.checked })}
-                                className="mr-2 rounded border-slate-700 bg-slate-950"
-                              />
-                              <label className="block text-xs font-medium text-slate-200">Suppressed</label>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Object */}
-                        <div id="section-object" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Object</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">File Size</label>
-                              <input
-                                value={editing.gbl_fileSize_s ?? ""}
-                                onChange={(e) => setEditing({ ...editing, gbl_fileSize_s: e.target.value || null })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Relations */}
-                        <div id="section-relations" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
-                          <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Relations</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Member Of (pipe-delimited)</label>
-                              <input
-                                value={editing.pcdm_memberOf_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, pcdm_memberOf_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Is Part Of (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_isPartOf_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_isPartOf_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Source (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_source_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_source_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Is Version Of (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_isVersionOf_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_isVersionOf_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Replaces (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_replaces_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_replaces_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-200 mb-1">Relation (pipe-delimited)</label>
-                              <input
-                                value={editing.dct_relation_sm.join("|")}
-                                onChange={(e) => setEditing({ ...editing, dct_relation_sm: e.target.value.split("|").map(s => s.trim()).filter(Boolean) })}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Format</label>
+                            <input
+                              value={editing.dct_format_s ?? ""}
+                              onChange={(e) => setEditing({ ...editing, dct_format_s: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                              placeholder="Shapefile"
+                            />
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between mt-6 border-t border-slate-800 pt-4">
-                        <div className="text-[11px] text-slate-500">
-                          Saving will write{" "}
-                          <span className="font-mono">
-                            {metadataPath}/{editing.id || "new-id"}.json
-                          </span>{" "}
-                          to GitHub.
+                      {/* Identification */}
+                      <div id="section-identification" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Identification</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+                          <div className="md:col-span-2">
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Description (dct_description_sm)</label>
+                            <TagInput
+                              value={editing.dct_description_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_description_sm: val })}
+                              fieldName="dct_description_sm"
+                              placeholder="Add descriptions..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Alt Title (dct_alternative_sm)</label>
+                            <TagInput
+                              value={editing.dct_alternative_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_alternative_sm: val })}
+                              fieldName="dct_alternative_sm"
+                              placeholder="Add alternative titles..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Display Note (gbl_displayNote_sm)</label>
+                            <TagInput
+                              value={editing.gbl_displayNote_sm}
+                              onChange={(val) => setEditing({ ...editing, gbl_displayNote_sm: val })}
+                              fieldName="gbl_displayNote_sm"
+                              placeholder="Add display notes..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Language (dct_language_sm)</label>
+                            <TagInput
+                              value={editing.dct_language_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_language_sm: val })}
+                              fieldName="dct_language_sm"
+                              placeholder="Add languages..."
+                            />
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedId(null);
-                              setEditing(null);
-                              setSaveError(null);
-                            }}
-                            className="rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800/70"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isSaving || !editing.id || !editing.dct_title_s}
-                            onClick={async () => {
-                              if (!project || !editing) return;
+                      </div>
 
-                              setIsSaving(true);
-                              setSaveError(null);
-                              try {
-                                const client = new GithubClient({ token: token.trim() });
-                                const toSave: Resource = {
-                                  ...editing,
-                                };
-                                const json = resourceToJson(toSave);
-                                const path = `${metadataPath}/${toSave.id}.json`;
-                                await upsertJsonFile(
+                      {/* Credits */}
+                      <div id="section-credits" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Credits</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Creator (dct_creator_sm)</label>
+                            <TagInput
+                              value={editing.dct_creator_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_creator_sm: val })}
+                              fieldName="dct_creator_sm"
+                              placeholder="Add creators..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Publisher (dct_publisher_sm)</label>
+                            <TagInput
+                              value={editing.dct_publisher_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_publisher_sm: val })}
+                              fieldName="dct_publisher_sm"
+                              placeholder="Add publishers..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Provider</label>
+                            <input
+                              value={editing.schema_provider_s ?? ""}
+                              onChange={(e) => setEditing({ ...editing, schema_provider_s: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Categories */}
+                      <div id="section-categories" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Categories</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Resource Type (gbl_resourceType_sm)</label>
+                            <TagInput
+                              value={editing.gbl_resourceType_sm}
+                              onChange={(val) => setEditing({ ...editing, gbl_resourceType_sm: val })}
+                              fieldName="gbl_resourceType_sm"
+                              placeholder="Add resource types..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Subject (dct_subject_sm)</label>
+                            <TagInput
+                              value={editing.dct_subject_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_subject_sm: val })}
+                              fieldName="dct_subject_sm"
+                              placeholder="Add subjects..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Theme (dcat_theme_sm)</label>
+                            <TagInput
+                              value={editing.dcat_theme_sm}
+                              onChange={(val) => setEditing({ ...editing, dcat_theme_sm: val })}
+                              fieldName="dcat_theme_sm"
+                              placeholder="Add themes..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Keyword (dcat_keyword_sm)</label>
+                            <TagInput
+                              value={editing.dcat_keyword_sm}
+                              onChange={(val) => setEditing({ ...editing, dcat_keyword_sm: val })}
+                              fieldName="dcat_keyword_sm"
+                              placeholder="Add keywords..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Temporal */}
+                      <div id="section-temporal" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Temporal</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Temporal Coverage (dct_temporal_sm)</label>
+                            <TagInput
+                              value={editing.dct_temporal_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_temporal_sm: val })}
+                              fieldName="dct_temporal_sm"
+                              placeholder="Add temporal coverage..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Date Issued</label>
+                            <input
+                              value={editing.dct_issued_s ?? ""}
+                              onChange={(e) => setEditing({ ...editing, dct_issued_s: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                              placeholder="YYYY-MM-DD"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Date Range (gbl_dateRange_drsim)</label>
+                            <TagInput
+                              value={editing.gbl_dateRange_drsim}
+                              onChange={(val) => setEditing({ ...editing, gbl_dateRange_drsim: val })}
+                              fieldName="gbl_dateRange_drsim"
+                              placeholder="Add date ranges..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Spatial */}
+                      <div id="section-spatial" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Spatial</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Spatial Coverage (dct_spatial_sm)</label>
+                            <TagInput
+                              value={editing.dct_spatial_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_spatial_sm: val })}
+                              fieldName="dct_spatial_sm"
+                              placeholder="Add spatial coverage..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Bounding Box (ENVELOPE)</label>
+                            <input
+                              value={editing.dcat_bbox ?? ""}
+                              onChange={(e) => setEditing({ ...editing, dcat_bbox: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                              placeholder="ENVELOPE(-180, 180, 90, -90)"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Geometry</label>
+                            <input
+                              value={editing.locn_geometry ?? ""}
+                              onChange={(e) => setEditing({ ...editing, locn_geometry: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                          </div>
+                          <div className="flex items-center mt-6">
+                            <input
+                              type="checkbox"
+                              checked={editing.gbl_georeferenced_b ?? false}
+                              onChange={(e) => setEditing({ ...editing, gbl_georeferenced_b: e.target.checked })}
+                              className="mr-2 rounded border-slate-700 bg-slate-950"
+                            />
+                            <label className="block text-xs font-medium text-slate-200">Georeferenced</label>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Administrative */}
+                      <div id="section-administrative" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Administrative</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Identifier (dct_identifier_sm)</label>
+                            <TagInput
+                              value={editing.dct_identifier_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_identifier_sm: val })}
+                              fieldName="dct_identifier_sm"
+                              placeholder="Add identifiers..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">WXS Identifier</label>
+                            <input
+                              value={editing.gbl_wxsIdentifier_s ?? ""}
+                              onChange={(e) => setEditing({ ...editing, gbl_wxsIdentifier_s: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Rights (dct_rights_sm)</label>
+                            <TagInput
+                              value={editing.dct_rights_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_rights_sm: val })}
+                              fieldName="dct_rights_sm"
+                              placeholder="Add rights..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Rights Holder (dct_rightsHolder_sm)</label>
+                            <TagInput
+                              value={editing.dct_rightsHolder_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_rightsHolder_sm: val })}
+                              fieldName="dct_rightsHolder_sm"
+                              placeholder="Add rights holders..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">License (dct_license_sm)</label>
+                            <TagInput
+                              value={editing.dct_license_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_license_sm: val })}
+                              fieldName="dct_license_sm"
+                              placeholder="Add licenses..."
+                            />
+                          </div>
+                          <div className="flex items-center mt-6">
+                            <input
+                              type="checkbox"
+                              checked={editing.gbl_suppressed_b ?? false}
+                              onChange={(e) => setEditing({ ...editing, gbl_suppressed_b: e.target.checked })}
+                              className="mr-2 rounded border-slate-700 bg-slate-950"
+                            />
+                            <label className="block text-xs font-medium text-slate-200">Suppressed</label>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Object */}
+                      <div id="section-object" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Object</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">File Size</label>
+                            <input
+                              value={editing.gbl_fileSize_s ?? ""}
+                              onChange={(e) => setEditing({ ...editing, gbl_fileSize_s: e.target.value || null })}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Relations */}
+                      <div id="section-relations" className="scroll-mt-6 rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+                        <h3 className="mb-4 text-base font-semibold text-slate-200 border-b border-slate-700 pb-2">Relations</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Member Of (pcdm_memberOf_sm)</label>
+                            <TagInput
+                              value={editing.pcdm_memberOf_sm}
+                              onChange={(val) => setEditing({ ...editing, pcdm_memberOf_sm: val })}
+                              fieldName="pcdm_memberOf_sm"
+                              placeholder="Add member of..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Is Part Of (dct_isPartOf_sm)</label>
+                            <TagInput
+                              value={editing.dct_isPartOf_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_isPartOf_sm: val })}
+                              fieldName="dct_isPartOf_sm"
+                              placeholder="Add is part of..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Source (dct_source_sm)</label>
+                            <TagInput
+                              value={editing.dct_source_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_source_sm: val })}
+                              fieldName="dct_source_sm"
+                              placeholder="Add source..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Is Version Of (dct_isVersionOf_sm)</label>
+                            <TagInput
+                              value={editing.dct_isVersionOf_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_isVersionOf_sm: val })}
+                              fieldName="dct_isVersionOf_sm"
+                              placeholder="Add is version of..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Replaces (dct_replaces_sm)</label>
+                            <TagInput
+                              value={editing.dct_replaces_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_replaces_sm: val })}
+                              fieldName="dct_replaces_sm"
+                              placeholder="Add replaces..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-200 mb-1">Relation (dct_relation_sm)</label>
+                            <TagInput
+                              value={editing.dct_relation_sm}
+                              onChange={(val) => setEditing({ ...editing, dct_relation_sm: val })}
+                              fieldName="dct_relation_sm"
+                              placeholder="Add relation..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    <div className="flex items-center justify-between mt-6 border-t border-slate-800 pt-4">
+                      <div className="text-[11px] text-slate-500">
+                        Saving will write{" "}
+                        <span className="font-mono">
+                          {metadataPath}/{editing.id || "new-id"}.json
+                        </span>{" "}
+                        to GitHub.
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(null);
+                            setEditing(null);
+                            setSaveError(null);
+                            setView("list");
+                          }}
+                          className="rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800/70"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSaving || !editing.id || !editing.dct_title_s}
+                          onClick={async () => {
+                            if (!project || !editing) return;
+
+                            setIsSaving(true);
+                            setSaveError(null);
+                            try {
+                              const client = new GithubClient({ token: token.trim() });
+                              const toSave: Resource = {
+                                ...editing,
+                              };
+                              const json = resourceToJson(toSave);
+                              const path = `${metadataPath}/${toSave.id}.json`;
+                              await upsertJsonFile(
+                                client,
+                                project,
+                                path,
+                                json,
+                                selectedId
+                                  ? `Update Aardvark resource ${toSave.id}`
+                                  : `Add Aardvark resource ${toSave.id}`
+                              );
+
+                              // Write to DuckDB first (source of truth)
+                              const allResources = await queryResources();
+                              // Simple update logic for DuckDB sync:
+                              // Since we don't have update logic, we do full sync for now or optimistic update
+                              // Actually, we can just upsert the single resource into DuckDB later if we want optimization.
+                              // For now, let's just re-sync everything or use the array logic.
+
+                              const updatedResources: Resource[] = (() => {
+                                const without = allResources.filter(
+                                  (r) => r.id !== toSave.id
+                                );
+                                return [...without, toSave].sort((a, b) =>
+                                  a.id.localeCompare(b.id)
+                                );
+                              })();
+                              await syncDuckDbFromResources(updatedResources);
+
+                              // Persist DuckDB to IndexedDB
+                              const ctx = await getDuckDbContext();
+                              if (ctx && ctx.db) {
+                                const { persistDuckDbToIndexedDB } = await import("../duckdb/duckdbClient");
+                                await persistDuckDbToIndexedDB(ctx.db);
+                              }
+
+                              // Refresh count
+                              await refreshResourceCount();
+                              setSelectedId(toSave.id);
+
+                              // Sync to GitHub FROM DuckDB
+                              const duckdbResources = await queryResources();
+                              const resourcesCsv = buildResourcesCsv(duckdbResources);
+                              const distsCsv = buildDistributionsCsv(duckdbResources);
+
+                              if (resourcesCsv) {
+                                await upsertTextFile(
                                   client,
                                   project,
-                                  path,
-                                  json,
-                                  selectedId
-                                    ? `Update Aardvark resource ${toSave.id}`
-                                    : `Add Aardvark resource ${toSave.id}`
+                                  "resources.csv",
+                                  resourcesCsv,
+                                  "Rebuild resources.csv from metadata"
                                 );
-
-                                // Write to DuckDB first (source of truth)
-                                const allResources = await queryResources();
-                                const updatedResources: Resource[] = (() => {
-                                  const without = allResources.filter(
-                                    (r) => r.id !== toSave.id
-                                  );
-                                  return [...without, toSave].sort((a, b) =>
-                                    a.id.localeCompare(b.id)
-                                  );
-                                })();
-                                await syncDuckDbFromResources(updatedResources);
-
-                                // Persist DuckDB to IndexedDB
-                                const ctx = await getDuckDbContext();
-                                if (ctx && ctx.db) {
-                                  const { persistDuckDbToIndexedDB } = await import("../duckdb/duckdbClient");
-                                  await persistDuckDbToIndexedDB(ctx.db);
-                                }
-
-                                // Refresh count
-                                await refreshResourceCount();
-                                setSelectedId(toSave.id);
-
-                                // Sync to GitHub FROM DuckDB
-                                const duckdbResources = await queryResources();
-                                const resourcesCsv = buildResourcesCsv(duckdbResources);
-                                const distsCsv = buildDistributionsCsv(duckdbResources);
-
-                                if (resourcesCsv) {
-                                  await upsertTextFile(
-                                    client,
-                                    project,
-                                    "resources.csv",
-                                    resourcesCsv,
-                                    "Rebuild resources.csv from metadata"
-                                  );
-                                }
-                                if (distsCsv) {
-                                  await upsertTextFile(
-                                    client,
-                                    project,
-                                    "distributions.csv",
-                                    distsCsv,
-                                    "Rebuild distributions.csv from metadata"
-                                  );
-                                }
-                              } catch (err) {
-                                console.error(err);
-                                setSaveError(
-                                  err instanceof Error
-                                    ? err.message
-                                    : "Failed to save resource to GitHub."
-                                );
-                              } finally {
-                                setIsSaving(false);
                               }
-                            }}
-                            className="rounded-md bg-emerald-500 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-emerald-400 disabled:opacity-60"
-                          >
-                            {isSaving
-                              ? "Saving…"
-                              : selectedId
-                                ? "Save changes to GitHub"
-                                : "Create in GitHub"}
-                          </button>
-                        </div>
+                              if (distsCsv) {
+                                await upsertTextFile(
+                                  client,
+                                  project,
+                                  "distributions.csv",
+                                  distsCsv,
+                                  "Rebuild distributions.csv from metadata"
+                                );
+                              }
+                              // Success! return to edit mode or list
+                              // Stay in edit mode but maybe give feedback?
+                              // Or go back to list?
+                              setView("list");
+                              setEditing(null); // Clear editing to force list view
+                            } catch (err) {
+                              console.error(err);
+                              setSaveError(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Failed to save resource to GitHub."
+                              );
+                            } finally {
+                              setIsSaving(false);
+                            }
+                          }}
+                          className="rounded-md bg-emerald-500 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-emerald-400 disabled:opacity-60"
+                        >
+                          {isSaving
+                            ? "Saving…"
+                            : selectedId
+                              ? "Save changes to GitHub"
+                              : "Create in GitHub"}
+                        </button>
                       </div>
-                    </form>
-                  </>
-                )}
-              </section>
-            </div>
-          )}
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+          </section>
         </div>
       </main >
     </div >
