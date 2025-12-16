@@ -1,30 +1,21 @@
 {
-  "id": "taco-foo",
-  "dct_title_s": "Taco Fool (He's a fool)",
+  "id": "nicollet-foo",
+  "dct_title_s": "Nicollet Foo",
   "dct_accessRights_s": "Public",
   "gbl_resourceClass_sm": [
     "Datasets",
-    "Dawg",
-    "Dog",
-    "Piano",
-    "Volcano"
+    "Map",
+    "Pizza"
   ],
   "gbl_mdVersion_s": "Aardvark",
   "dct_alternative_sm": [],
-  "dct_description_sm": [
-    "Extra description here",
-    "Taco Dogs description here."
-  ],
+  "dct_description_sm": [],
   "dct_language_sm": [],
   "gbl_displayNote_sm": [],
   "dct_creator_sm": [],
   "dct_publisher_sm": [],
   "gbl_resourceType_sm": [],
-  "dct_subject_sm": [
-    "Puke",
-    "Human",
-    "Sonic Youth"
-  ],
+  "dct_subject_sm": [],
   "dcat_theme_sm": [],
   "dcat_keyword_sm": [],
   "dct_temporal_sm": [],
@@ -32,10 +23,7 @@
   "dct_spatial_sm": [],
   "dct_identifier_sm": [],
   "dct_rights_sm": [],
-  "dct_rightsHolder_sm": [
-    "Eric Larson",
-    "Megan Larson"
-  ],
+  "dct_rightsHolder_sm": [],
   "dct_license_sm": [],
   "pcdm_memberOf_sm": [],
   "dct_isPartOf_sm": [],
