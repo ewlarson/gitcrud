@@ -162,62 +162,69 @@ export const App: React.FC = () => {
     }
   }
 
-  // Initial load: try to load Parquet file if available
-  useEffect(() => {
-    async function init() {
-      // Only try loading parquet if we haven't successfully restored state 
-      // or if we want to ensure fresh data.
+  async function loadDataFromConfig(config: ProjectConfig | null) {
+    // Only try loading parquet if we haven't successfully restored state 
+    // or if we want to ensure fresh data.
 
-      const ctx = await getDuckDbContext();
-      if (!ctx || !ctx.db) return;
+    const ctx = await getDuckDbContext();
+    if (!ctx || !ctx.db) return;
 
-      const { importParquetFromUrl } = await import("../duckdb/duckdbClient");
-      const resources = await queryResources();
+    const { importParquetFromUrl } = await import("../duckdb/duckdbClient");
+
+    // Always query first to see if we have data? 
+    // If this is called from 'Connect', we might want to force reload or just append?
+    // Usually 'Connect' implies switching context, so we might want to clear resources first?
+    // But init() logic is safe: "if resources.length === 0".
+    // Let's stick to safe logic: try to load if empty. 
+    // If user wants to force reload, they can refresh page. 
+    // BUT 'Connect' might be switching to a new repo, so we probably SHOULD force load if the repo changed.
+
+    const resources = await queryResources();
+
+    // If config is provided (explicit connect) or stored (init), we try to load.
+    if (config) {
+      let url = `https://${config.owner}.github.io/${config.repo}/resources.parquet`;
+      console.log("Attempting to load remote parquet from", url);
+
+      // We should check if we already have data for this repo? 
+      // For now, let's just try to import. importParquetFromUrl usually appends or fails if table exists?
+      // importParquetFromUrl uses "CREATE TABLE ... AS SELECT ...". 
+      // If table exists, we should probably DROP it first if switching repos?
+      // App doesn't handle multiple repos well yet. 
+      // Let's assume for now valid flow is: Connect -> (Maybe Clear) -> Load.
+      // If resources.length > 0, we assume it's loaded. 
 
       if (resources.length === 0) {
-        console.log("DuckDB empty, attempting to load resources.parquet...");
-        try {
-          let url = new URL("resources.parquet", window.location.href).href;
-
-          // Check if we have a stored project config to load from remote
-          const storedConfig = loadProjectConfig();
-          if (storedConfig) {
-            // Construct GitHub Pages URL: https://<owner>.github.io/<repo>/resources.parquet
-            // distinct from the repo URL (which might be the code repo if not split yet, but user intends to split)
-            // If the user follows the "Data Repo" plan, the config will point to the Data Repo.
-            url = `https://${storedConfig.owner}.github.io/${storedConfig.repo}/resources.parquet`;
-            console.log("Found stored config, attempting to load remote parquet from", url);
-          } else {
-            console.log("No stored config, attempting to load local parquet from", url);
-          }
-
-          const success = await importParquetFromUrl(url, "resources");
-          if (success) {
-            console.log("Successfully loaded resources.parquet");
-            await refreshResourceCount();
-          } else {
-            console.log("resources.parquet not found or failed to load from", url);
-            // If remote failed, maybe try local fallback? 
-            // For now, let's keep it simple. If they have config, they expect remote.
-            if (storedConfig) {
-              console.log("Remote load failed, falling back to local...");
-              const localUrl = new URL("resources.parquet", window.location.href).href;
-              const localSuccess = await importParquetFromUrl(localUrl, "resources");
-              if (localSuccess) {
-                console.log("Successfully loaded local resources.parquet fallback");
-                await refreshResourceCount();
-                return;
-              }
-            }
-            setDataError(`Failed to import resources.parquet from ${url} (check console)`);
-          }
-        } catch (e) {
-          console.warn("Failed to load parquet", e);
-          setDataError(`Failed to load parquet: ${e instanceof Error ? e.message : String(e)}`);
+        const success = await importParquetFromUrl(url, "resources");
+        if (success) {
+          console.log("Successfully loaded resources.parquet");
+          await refreshResourceCount();
+        } else {
+          console.log("resources.parquet not found or failed to load from", url);
+          // Fallback logic for init() scenario (no config passed explicitly, loaded from storage)
+          // If this is init(), checking local fallback is okay.
+          // If this is handleConnect(), we shouldn't fallback to local resources.parquet of *this* web app, 
+          // because we are connecting to a remote data repo.
+          setDataError(`Failed to import resources.parquet from ${url} (check console). If this is a new repo, it might still be building (404).`);
+        }
+      }
+    } else {
+      // No config, maybe local dev mode fallback?
+      if (resources.length === 0) {
+        console.log("No config, attempting to load local resources.parquet...");
+        const url = new URL("resources.parquet", window.location.href).href;
+        const success = await importParquetFromUrl(url, "resources");
+        if (success) {
+          await refreshResourceCount();
         }
       }
     }
-    init();
+  }
+
+  // Initial load
+  useEffect(() => {
+    const storedConfig = loadProjectConfig();
+    loadDataFromConfig(storedConfig);
   }, []);
 
   useEffect(() => {
@@ -342,56 +349,20 @@ export const App: React.FC = () => {
       await client.verifyRepoAndBranch(config);
       const metaStatus = await client.metadataDirectoryStatus(config);
 
-      // Load existing metadata JSON files from GitHub.
+      // Load data using the new centralized logic (parquet)
       setIsLoadingData(true);
       setDataError(null);
       try {
-        const files = await client.listMetadataJsonFiles(config);
-        console.log(`Found ${files.length} JSON files in GitHub`);
-        const all: Resource[] = [];
-        for (const f of files) {
-          try {
-            const json = (await client.readJsonFile(config, f.path)) as unknown;
-            const res = resourceFromJson(json as any);
-            all.push(res);
-            console.log(`Loaded resource: ${res.id}`);
-          } catch (innerErr) {
-            console.error("Failed to parse resource", f.path, innerErr);
-          }
-        }
-        // Populate DuckDB with resources from GitHub (DuckDB is source of truth)
-        // Check if DuckDB is available first
-        const ctx = await getDuckDbContext();
-        if (ctx && ctx.db) {
-          try {
-            console.log(`Populating DuckDB with ${all.length} resources from GitHub...`);
-            await syncDuckDbFromResources(all);
+        // With the new architecture, we prefer loading the parquet file from Pages
+        // rather than listing thousands of JSON files via API.
+        await loadDataFromConfig(config);
 
-            // Persist DuckDB to IndexedDB
-            const { persistDuckDbToIndexedDB } = await import("../duckdb/duckdbClient");
-            await persistDuckDbToIndexedDB(ctx.db);
-            console.log("Successfully populated and persisted DuckDB");
-
-            // Refresh resource count from DuckDB
-            await refreshResourceCount();
-          } catch (duckdbErr) {
-            console.warn("DuckDB population failed, using localStorage fallback:", duckdbErr);
-            // Store in localStorage as fallback
-            localStorage.setItem(`aardvark-resources-${config.owner}-${config.repo}`, JSON.stringify(all));
-            setResourceCount(all.length);
-          }
-        } else {
-          // DuckDB not available - use localStorage fallback
-          console.warn("DuckDB not available (CORS issue in development), using localStorage fallback");
-          localStorage.setItem(`aardvark-resources-${config.owner}-${config.repo}`, JSON.stringify(all));
-          setResourceCount(all.length);
-        }
       } catch (loadErr) {
         console.error(loadErr);
         setDataError(
           loadErr instanceof Error
             ? loadErr.message
-            : "Could not load existing metadata files from GitHub."
+            : "Could not load data."
         );
       } finally {
         setIsLoadingData(false);
