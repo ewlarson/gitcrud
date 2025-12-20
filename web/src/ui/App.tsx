@@ -9,19 +9,49 @@ import { ImportPage } from "./ImportPage";
 import { ResourceEdit } from "./ResourceEdit";
 import { DistributionsList } from "./DistributionsList";
 import { Dashboard } from "./Dashboard";
+import { useUrlState } from "../hooks/useUrlState";
 
 
 export const App: React.FC = () => {
   // Local state only
   const [resourceCount, setResourceCount] = useState<number>(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // URL State
+  type ViewType = "dashboard" | "admin" | "edit" | "create" | "import" | "distributions";
+  interface AppState {
+    view: ViewType;
+    id?: string;
+  }
+
+  const [urlState, setUrlState] = useUrlState<AppState>(
+    { view: "dashboard" },
+    {
+      toUrl: (s) => {
+        const p = new URLSearchParams();
+        if (s.view !== "dashboard") p.set("view", s.view);
+        if (s.id) p.set("id", s.id);
+        return p;
+      },
+      fromUrl: (p) => {
+        const view = (p.get("view") as ViewType) || "dashboard";
+        const id = p.get("id") || undefined;
+        return { view, id };
+      },
+      cleanup: (p) => {
+        p.delete("view");
+        p.delete("id");
+      }
+    }
+  );
+
+  const { view, id: selectedId } = urlState;
+
   const [editing, setEditing] = useState<Resource | null>(null);
   const [editingDistributions, setEditingDistributions] = useState<Distribution[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isExportingDuckDb, setIsExportingDuckDb] = useState(false);
   const [isExportingJson, setIsExportingJson] = useState(false);
-  const [view, setView] = useState<"dashboard" | "admin" | "edit" | "create" | "import" | "distributions">("dashboard");
   const [status, setStatus] = useState<string>("Local Mode");
 
   // Refresh resource count from DuckDB
@@ -40,6 +70,27 @@ export const App: React.FC = () => {
     // Just refresh count, data loading is handled by DuckDB client internals
     refreshResourceCount();
   }, []);
+
+  // Load resource if view is edit and we have ID but no data
+  useEffect(() => {
+    const load = async () => {
+      if (view === "edit" && selectedId && (!editing || editing.id !== selectedId)) {
+        const r = await queryResourceById(selectedId);
+        if (r) {
+          const d = await queryDistributionsForResource(selectedId);
+          setEditing(r);
+          setEditingDistributions(d);
+        } else {
+          // Not found? go back
+          setUrlState(s => ({ ...s, view: "dashboard" }));
+        }
+      } else if (view === "create" && !editing) {
+        // Initialize empty
+        handleCreate(false); // don't set view, just data
+      }
+    };
+    load();
+  }, [view, selectedId, editing, setUrlState]);
 
 
   async function handleExportDuckDb() {
@@ -98,7 +149,7 @@ export const App: React.FC = () => {
       await upsertResource(resource, distributions);
       await refreshResourceCount();
 
-      setView("dashboard");
+      setUrlState({ view: "dashboard" }); // Clear ID
       setEditing(null);
       setEditingDistributions([]);
 
@@ -111,20 +162,12 @@ export const App: React.FC = () => {
   }
 
   const handleEditResource = async (id: string) => {
-    const r = await queryResourceById(id);
-    if (r) {
-      const d = await queryDistributionsForResource(id);
-      setEditing(r);
-      setEditingDistributions(d);
-      setSelectedId(id);
-      setView("edit");
-      setSaveError(null);
-    }
+    // Just set URL, the effect will load data
+    setUrlState({ view: "edit", id });
   };
 
-  const handleCreate = () => {
-    setSelectedId(null);
-    setEditing({
+  const handleCreate = (setView = true) => {
+    const empty: Resource = {
       id: "",
       dct_title_s: "",
       dct_accessRights_s: "Public",
@@ -163,9 +206,10 @@ export const App: React.FC = () => {
       dct_isReplacedBy_sm: [],
       dct_relation_sm: [],
       extra: {},
-    });
+    };
+    setEditing(empty);
     setEditingDistributions([]);
-    setView("create");
+    if (setView) setUrlState({ view: "create" });
     setSaveError(null);
   };
 
@@ -188,21 +232,21 @@ export const App: React.FC = () => {
           <div className="flex gap-2 mt-1">
             <button
               type="button"
-              onClick={() => setView("dashboard")}
+              onClick={() => setUrlState({ view: "dashboard" })}
               className={`rounded-md border px-2 py-1 text-[10px] ${view === "dashboard" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
             >
               Dashboard
             </button>
             <button
               type="button"
-              onClick={() => setView("admin")}
+              onClick={() => setUrlState({ view: "admin" })}
               className={`rounded-md border px-2 py-1 text-[10px] ${view === "admin" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
             >
               Admin List
             </button>
             <button
               type="button"
-              onClick={() => setView("distributions")}
+              onClick={() => setUrlState({ view: "distributions" })}
               className={`rounded-md border px-2 py-1 text-[10px] ${view === "distributions" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
             >
               Distributions
@@ -210,7 +254,7 @@ export const App: React.FC = () => {
             <div className="w-[1px] h-6 bg-slate-800 mx-1"></div>
             <button
               type="button"
-              onClick={() => setView("import")}
+              onClick={() => setUrlState({ view: "import" })}
               className={`rounded-md border px-2 py-1 text-[10px] ${view === "import" ? "bg-indigo-600 border-indigo-500 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
             >
               Import / Export
@@ -242,7 +286,7 @@ export const App: React.FC = () => {
                 <Dashboard
                   project={null}
                   onEdit={handleEditResource}
-                  onCreate={handleCreate}
+                  onCreate={() => handleCreate(true)}
                 />
               </div>
             )}
@@ -252,7 +296,7 @@ export const App: React.FC = () => {
                 project={null}
                 resourceCount={resourceCount}
                 onEdit={handleEditResource}
-                onCreate={handleCreate}
+                onCreate={() => handleCreate(true)}
                 onRefreshProject={refreshResourceCount}
               />
             )}
@@ -269,7 +313,7 @@ export const App: React.FC = () => {
                 initialDistributions={editingDistributions}
                 onSave={handleSave}
                 onCancel={() => {
-                  setView("dashboard");
+                  setUrlState({ view: "dashboard" });
                   setEditing(null);
                   setEditingDistributions([]);
                 }}
@@ -282,7 +326,7 @@ export const App: React.FC = () => {
               <div className="flex flex-col h-full">
                 <button
                   onClick={() => {
-                    setView("dashboard");
+                    setUrlState({ view: "dashboard" });
                   }}
                   className="mb-4 self-start flex items-center gap-2 text-xs text-slate-400 hover:text-white"
                 >

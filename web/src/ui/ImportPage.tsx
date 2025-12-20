@@ -1,9 +1,11 @@
 import React, { useState } from "react";
-import { importCsv, saveDb, exportDbBlob } from "../duckdb/duckdbClient";
+import { importCsv, saveDb, exportDbBlob, importJsonData } from "../duckdb/duckdbClient";
+import { GithubImport } from "./GithubImport";
 
 export const ImportPage: React.FC = () => {
     const [status, setStatus] = useState<string>("");
     const [loading, setLoading] = useState(false);
+    const [mode, setMode] = useState<"local" | "github">("local");
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
@@ -18,14 +20,23 @@ export const ImportPage: React.FC = () => {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 setStatus(`Importing ${file.name}...`);
-                const res = await importCsv(file);
-                if (!res.success) {
-                    throw new Error(`Failed to import ${file.name}: ${res.message}`);
+
+                if (file.name.endsWith(".json")) {
+                    const text = await file.text();
+                    const json = JSON.parse(text);
+                    const count = await importJsonData(json);
+                    totalRows += count;
+                } else {
+                    const res = await importCsv(file);
+                    if (!res.success) {
+                        throw new Error(`Failed to import ${file.name}: ${res.message}`);
+                    }
+                    totalRows += res.count || 0;
                 }
-                totalRows += res.count || 0;
             }
             setStatus(`Import complete! Loaded ${totalRows} resources. Data saved to in-memory DB and IndexedDB.`);
         } catch (err: any) {
+            console.error(err);
             setStatus(`Error: ${err.message}`);
         } finally {
             setLoading(false);
@@ -56,30 +67,63 @@ export const ImportPage: React.FC = () => {
     };
 
     return (
-        <div className="p-8 max-w-4xl mx-auto">
-            <h1 className="text-2xl font-bold mb-6 text-slate-100">Import Data</h1>
+        <div className="p-8 max-w-4xl mx-auto space-y-8">
+            <h1 className="text-2xl font-bold text-slate-100">Import Data</h1>
 
-            <div className="bg-slate-900 rounded-lg border border-slate-800 p-6 mb-8">
-                <h2 className="text-lg font-semibold mb-4 text-slate-200">1. CSV Import</h2>
-                <p className="text-slate-400 mb-4 text-sm">
-                    Upload Aardvark-compliant CSV files. Columns will be mapped automatically.
-                    Existing records with matching IDs will be updated.
-                </p>
-                <input
-                    type="file"
-                    accept=".csv"
-                    multiple
-                    onChange={handleFileChange}
-                    disabled={loading}
-                    className="block w-full text-sm text-slate-400
-                        file:mr-4 file:py-2 file:px-4
-                        file:rounded-full file:border-0
-                        file:text-sm file:font-semibold
-                        file:bg-indigo-600 file:text-white
-                        hover:file:bg-indigo-700
-                    "
-                />
+            {/* Tabs */}
+            <div className="flex border-b border-slate-800 space-x-6">
+                <button
+                    onClick={() => setMode("local")}
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "local" ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+                >
+                    Local File Upload
+                </button>
+                <button
+                    onClick={() => setMode("github")}
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "github" ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+                >
+                    GitHub Import
+                </button>
             </div>
+
+            {mode === "local" && (
+                <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-200">1. CSV / JSON Import</h2>
+                    <p className="text-slate-400 mb-4 text-sm">
+                        Upload Aardvark-compliant CSV files or OGM Aardvark JSON files.
+                        Existing records with matching IDs will be updated.
+                    </p>
+                    <input
+                        type="file"
+                        accept=".csv,.json"
+                        multiple
+                        onChange={handleFileChange}
+                        disabled={loading}
+                        className="block w-full text-sm text-slate-400
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded-full file:border-0
+                            file:text-sm file:font-semibold
+                            file:bg-indigo-600 file:text-white
+                            hover:file:bg-indigo-700
+                        "
+                    />
+                    {status && (
+                        <div className={`mt-6 p-4 rounded-md ${status.startsWith("Error") ? "bg-red-900/50 text-red-200 border-red-800" : "bg-slate-800 text-slate-200 border-slate-700"} border`}>
+                            {status}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {mode === "github" && (
+                <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-200">GitHub Repository Import</h2>
+                    <p className="text-slate-400 mb-6 text-sm">
+                        Scan a GitHub repository for `metadata-aardvark` folders and bulk import JSON records.
+                    </p>
+                    <GithubImport />
+                </div>
+            )}
 
             <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
                 <h2 className="text-lg font-semibold mb-4 text-slate-200">2. Save Database</h2>
@@ -96,11 +140,7 @@ export const ImportPage: React.FC = () => {
                 </button>
             </div>
 
-            {status && (
-                <div className={`mt-6 p-4 rounded-md ${status.startsWith("Error") ? "bg-red-900/50 text-red-200 border-red-800" : "bg-slate-800 text-slate-200 border-slate-700"} border`}>
-                    {status}
-                </div>
-            )}
+
         </div>
     );
 };

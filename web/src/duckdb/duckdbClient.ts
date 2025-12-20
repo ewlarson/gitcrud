@@ -716,7 +716,7 @@ export async function queryDistributionsForResource(resourceId: string): Promise
   }));
 }
 
-export async function upsertResource(resource: Resource, distributions: Distribution[] = []): Promise<void> {
+export async function upsertResource(resource: Resource, distributions: Distribution[] = [], options: { skipSave?: boolean } = {}): Promise<void> {
   const ctx = await getDuckDbContext();
   if (!ctx) throw new Error("DB not available");
   const { conn } = ctx;
@@ -778,7 +778,9 @@ export async function upsertResource(resource: Resource, distributions: Distribu
     }
   }
 
-  await saveDb();
+  if (!options.skipSave) {
+    await saveDb();
+  }
 }
 
 
@@ -798,22 +800,22 @@ async function loadFromIndexedDB(): Promise<Uint8Array | null> {
       const get = tx.objectStore(INDEXEDDB_STORE).get(DB_FILENAME);
       get.onsuccess = () => {
         if (get.result && get.result.byteLength > 0) {
-          console.log(`[IndexedDB] Loaded ${get.result.byteLength} bytes.`);
+          console.log("[IndexedDB] Found valid DB.");
           resolve(get.result);
         } else {
-          console.log(`[IndexedDB] No valid saved DB found (result: ${get.result ? get.result.byteLength + " bytes" : "null"}).`);
+          console.log("[IndexedDB] Found empty/invalid DB.");
           resolve(null);
         }
       };
       get.onerror = () => {
-        console.error("[IndexedDB] Error reading store:", get.error);
+        console.warn("[IndexedDB] Failed to load DB", get.error);
         resolve(null);
       };
     };
     req.onerror = () => {
-      console.error("[IndexedDB] Error opening DB:", req.error);
+      console.warn("[IndexedDB] Failed to open DB", req.error);
       resolve(null);
-    }
+    };
   });
 }
 
@@ -837,6 +839,91 @@ async function saveToIndexedDB(buffer: Uint8Array): Promise<void> {
     req.onerror = () => reject(req.error);
   });
 }
+
+
+// ... existing code ...
+
+export async function importJsonData(json: any, options: { skipSave?: boolean } = {}): Promise<number> {
+  const records = Array.isArray(json) ? json : [json];
+  let count = 0;
+
+  // Invert mapping for fast lookup: URI -> key
+  const uriToKey = new Map<string, string>();
+  for (const [key, uri] of Object.entries(REFERENCE_URI_MAPPING)) {
+    uriToKey.set(uri, key);
+  }
+
+  for (const record of records) {
+    if (!record.id) {
+      console.warn("Skipping record without ID:", record);
+      continue;
+    }
+
+    // Extract Distributions from dct_references_s
+    // Aardvark spec: dct_references_s is a JSON string: "{\"http://.../wms\":\"http://url...\"}"
+    const distributions: Distribution[] = [];
+    if (record.dct_references_s) {
+      try {
+        const refs = JSON.parse(record.dct_references_s);
+        for (const [uri, url] of Object.entries(refs)) {
+          // Check if URI is a known relation type
+          const relKey = uriToKey.get(uri);
+          if (relKey) {
+            distributions.push({
+              resource_id: record.id,
+              relation_key: relKey,
+              url: String(url)
+            });
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed to parse dct_references_s for ${record.id}`, e);
+      }
+    }
+
+    // Prepare Resource object
+    const res: Resource = {
+      id: record.id,
+      dct_title_s: record.dct_title_s || "",
+      dct_description_sm: Array.isArray(record.dct_description_sm) ? record.dct_description_sm : (record.dct_description_sm ? [record.dct_description_sm] : []),
+      gbl_resourceClass_sm: Array.isArray(record.gbl_resourceClass_sm) ? record.gbl_resourceClass_sm : [],
+      dct_accessRights_s: record.dct_accessRights_s || "Public",
+      ...record
+    };
+
+    const listFields = [
+      "dct_alternative_sm", "dct_description_sm", "dct_language_sm",
+      "gbl_displayNote_sm", "dct_creator_sm", "dct_publisher_sm",
+      "gbl_resourceType_sm", "dct_subject_sm", "dcat_theme_sm",
+      "dcat_keyword_sm", "dct_temporal_sm", "gbl_dateRange_drsim",
+      "gbl_indexYear_im", "dct_spatial_sm", "dct_identifier_sm",
+      "dct_rights_sm", "dct_rightsHolder_sm", "dct_license_sm",
+      "pcdm_memberOf_sm", "dct_isPartOf_sm", "dct_source_sm",
+      "dct_isVersionOf_sm", "dct_replaces_sm", "dct_isReplacedBy_sm",
+      "dct_relation_sm"
+    ];
+
+    for (const field of listFields) {
+      if (res[field as keyof Resource] !== undefined && !Array.isArray(res[field as keyof Resource])) {
+        // Cast to array
+        (res as any)[field] = [res[field as keyof Resource]];
+      }
+    }
+
+    // Upsert
+    // ALWAYS skip save inside loop to allow batch optimization
+    await upsertResource(res, distributions, { skipSave: true });
+    count++;
+  }
+
+  // Only save once at the end if not instructed to skip
+  if (!options.skipSave) {
+    await saveDb();
+  }
+
+  return count;
+}
+
 
 // *** Faceted Search DSL ***
 
@@ -873,7 +960,6 @@ export async function facetedSearch(req: FacetedSearchRequest): Promise<FacetedS
       const k = req.q.replace(/'/g, "''");
       clauses.push(`(
         dct_title_s ILIKE '%${k}%' OR
-        dct_description_sm ILIKE '%${k}%' OR
         id ILIKE '%${k}%' OR
         EXISTS (SELECT 1 FROM resources_mv mv WHERE mv.id = resources.id AND mv.val ILIKE '%${k}%')
       )`);

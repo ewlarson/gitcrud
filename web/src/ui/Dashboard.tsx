@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Resource } from "../aardvark/model";
 import { facetedSearch, FacetedSearchRequest } from "../duckdb/duckdbClient";
 import { ProjectConfig } from "../github/client";
+import { useUrlState } from "../hooks/useUrlState";
 
 interface DashboardProps {
     project: ProjectConfig | null;
@@ -24,21 +25,91 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
 
-    // Search State
-    const [query, setQuery] = useState("");
-    const [selectedFacets, setSelectedFacets] = useState<Record<string, string[]>>({});
-    const [page, setPage] = useState(1);
-    const pageSize = 20;
+    // URL State Definition
+    interface DashboardState {
+        q: string;
+        page: number;
+        facets: Record<string, string[]>;
+    }
 
-    // Debounce query
-    const [debouncedQuery, setDebouncedQuery] = useState(query);
+    const [state, setState] = useUrlState<DashboardState>(
+        { q: "", page: 1, facets: {} },
+        {
+            toUrl: (s) => {
+                const params = new URLSearchParams();
+                if (s.q) params.set("q", s.q);
+                if (s.page > 1) params.set("page", String(s.page));
+
+                // Facets
+                for (const [key, vals] of Object.entries(s.facets)) {
+                    for (const v of vals) {
+                        params.append(`f.${key}`, v);
+                    }
+                }
+                // Preserve other params like 'view'?
+                // The hook tries to manage its own params. 
+                // We need to merge with existing params in the hook logic, 
+                // but here we just produce WHAT WE WANT. 
+                // The hook (my implementation above) was naive. 
+                // Let's rely on the hook's ability to merge if we improve it, 
+                // OR simpler: read existing params in toUrl? No that's circular.
+
+                // For now, let's assume Dashboard takes over params OR explicitly pass 'view' if known.
+                // Actually App.tsx manages 'view'. 
+                // If we overwrite URLParams, we lose 'view'.
+                // We need a smarter hook or just manage all in App.
+
+                return params;
+            },
+            fromUrl: (params) => {
+                const q = params.get("q") || "";
+                const page = Number(params.get("page")) || 1;
+                const facets: Record<string, string[]> = {};
+
+                for (const [key, val] of params.entries()) {
+                    if (key.startsWith("f.")) {
+                        const field = key.substring(2);
+                        if (!facets[field]) facets[field] = [];
+                        facets[field].push(val);
+                    }
+                }
+                return { q, page, facets };
+            },
+            cleanup: (params) => {
+                params.delete("q");
+                params.delete("page");
+                const keysToDelete: string[] = [];
+                for (const key of params.keys()) {
+                    if (key.startsWith("f.")) {
+                        keysToDelete.push(key);
+                    }
+                }
+                keysToDelete.forEach(k => params.delete(k));
+            }
+        }
+    );
+
+    const { q, page, facets: selectedFacets } = state;
+
+    // Local input state for debounce
+    const [inputValue, setInputValue] = useState(q);
+
+    // Sync input value if URL changes externally (popstate)
+    useEffect(() => {
+        setInputValue(q);
+    }, [q]);
+
+    // Debounce update to URL
     useEffect(() => {
         const handler = setTimeout(() => {
-            setDebouncedQuery(query);
-            setPage(1);
-        }, 300);
+            if (inputValue !== q) {
+                setState(prev => ({ ...prev, q: inputValue, page: 1 }));
+            }
+        }, 400);
         return () => clearTimeout(handler);
-    }, [query]);
+    }, [inputValue, q, setState]);
+
+    const pageSize = 20;
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -54,7 +125,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             }
 
             const req: FacetedSearchRequest = {
-                q: debouncedQuery,
+                q: q, // use q from URL state (which is debounced-ish via input)
                 filters,
                 facets: FACETS.map(f => ({ field: f.field, limit: f.limit })),
                 page: { size: pageSize, from: (page - 1) * pageSize },
@@ -70,7 +141,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         } finally {
             setLoading(false);
         }
-    }, [debouncedQuery, selectedFacets, page]);
+    }, [q, selectedFacets, page]); // Depend on URL state
 
     useEffect(() => {
         fetchData();
@@ -78,15 +149,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
 
     // Toggle Facet Handler
     const toggleFacet = (field: string, value: string) => {
-        setSelectedFacets(prev => {
-            const current = prev[field] || [];
-            if (current.includes(value)) {
-                return { ...prev, [field]: current.filter(v => v !== value) };
+        setState(prev => {
+            const currentFacets = prev.facets[field] || [];
+            let newFieldFacets;
+            if (currentFacets.includes(value)) {
+                newFieldFacets = currentFacets.filter(v => v !== value);
             } else {
-                return { ...prev, [field]: [...current, value] };
+                newFieldFacets = [...currentFacets, value];
             }
+
+            return {
+                ...prev,
+                page: 1, // reset page on filter change
+                facets: {
+                    ...prev.facets,
+                    [field]: newFieldFacets
+                }
+            };
         });
-        setPage(1);
     };
 
     const totalPages = Math.ceil(total / pageSize);
@@ -150,8 +230,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                             type="text"
                             className="block w-full rounded-md border border-slate-700 bg-slate-950 pl-10 pr-3 py-2 text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 sm:text-sm"
                             placeholder="Search by keyword..."
-                            value={query}
-                            onChange={e => setQuery(e.target.value)}
+                            value={inputValue}
+                            onChange={e => setInputValue(e.target.value)}
                         />
                     </div>
                     <div className="ml-4 flex items-center gap-4">
@@ -216,7 +296,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     <div className="border-t border-slate-800 bg-slate-900 p-4 flex items-center justify-between">
                         <button
                             disabled={page <= 1}
-                            onClick={() => setPage(p => p - 1)}
+                            onClick={() => setState(prev => ({ ...prev, page: prev.page - 1 }))}
                             className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 disabled:opacity-50 hover:bg-slate-700"
                         >
                             Previous
@@ -224,7 +304,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                         <span className="text-sm text-slate-400">Page {page} of {totalPages}</span>
                         <button
                             disabled={page >= totalPages}
-                            onClick={() => setPage(p => p + 1)}
+                            onClick={() => setState(prev => ({ ...prev, page: prev.page + 1 }))}
                             className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 disabled:opacity-50 hover:bg-slate-700"
                         >
                             Next
@@ -235,3 +315,4 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         </div>
     );
 };
+

@@ -2,7 +2,7 @@
 // Uses a Personal Access Token (PAT) provided by the user.
 
 export interface GithubClientOptions {
-  token: string;
+  token?: string;
 }
 
 export interface GithubRepoRef {
@@ -18,7 +18,7 @@ export interface ProjectConfig extends GithubRepoRef {
 const STORAGE_KEY = "aardvark-project-config";
 
 export class GithubClient {
-  private readonly token: string;
+  private readonly token?: string;
 
   constructor(options: GithubClientOptions) {
     this.token = options.token;
@@ -28,22 +28,94 @@ export class GithubClient {
     path: string,
     init: RequestInit = {}
   ): Promise<T> {
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      ...(init.headers as Record<string, string> || {}),
+    };
+
+    if (this.token) {
+      headers.Authorization = `token ${this.token}`;
+    }
+
     const res = await fetch(`https://api.github.com${path}`, {
       ...init,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `token ${this.token}`,
-        ...(init.headers || {}),
-      },
+      headers,
     });
 
     if (!res.ok) {
+      // Handle Rate Limit specifically
+      if (res.status === 403 || res.status === 429) {
+        const limit = res.headers.get("x-ratelimit-limit");
+        const remain = res.headers.get("x-ratelimit-remaining");
+        const reset = res.headers.get("x-ratelimit-reset");
+        throw new Error(`GitHub Rate Limit Exceeded. Limit: ${limit}, Remaining: ${remain}. Resets at ${new Date(Number(reset) * 1000).toLocaleTimeString()}. Provide a Token!`);
+      }
+
       const text = await res.text();
       throw new Error(
         `GitHub API error ${res.status}: ${text || res.statusText}`
       );
     }
     return (await res.json()) as T;
+  }
+
+  async fetchRecursiveTree(repoRef: GithubRepoRef): Promise<{ path: string; sha: string; type: string }[]> {
+    const { owner, repo, branch } = repoRef;
+
+    // 1. Get branch SHA
+    const branchData = await this.request<{ commit: { sha: string } }>(
+      `/repos/${owner}/${repo}/branches/${branch}`
+    );
+    const treeSha = branchData.commit.sha;
+
+    // 2. Get Tree Recursive
+    const treeData = await this.request<{ tree: { path: string; mode: string; type: string; sha: string }[], truncated: boolean }>(
+      `/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`
+    );
+
+    if (treeData.truncated) {
+      console.warn("GitHub tree response truncated. Some files may be missing.");
+    }
+
+    return treeData.tree.map(i => ({
+      path: i.path,
+      sha: i.sha,
+      type: i.type === "blob" ? "blob" : "tree"
+    }));
+  }
+
+  async fetchBlob(repoRef: GithubRepoRef, sha: string): Promise<any> {
+    const { owner, repo } = repoRef;
+    const data = await this.request<{ content: string; encoding: string }>(
+      `/repos/${owner}/${repo}/git/blobs/${sha}`
+    );
+    if (data.encoding === "base64") {
+      const binaryString = atob(data.content.replace(/\s/g, ''));
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const utf8Str = new TextDecoder().decode(bytes);
+      return JSON.parse(utf8Str);
+    } else {
+      throw new Error(`Unsupported blob encoding: ${data.encoding}`);
+    }
+  }
+
+  async fetchPublicJson(repoRef: GithubRepoRef, path: string): Promise<any> {
+    const { owner, repo, branch } = repoRef;
+    // Encode path segments but preserve slashes
+    const encodedPath = path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+
+    // Cache bust query param? No, we likely want cached for speed.
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${encodedPath}`;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      // Check if it might be an API rate limit response disguised as 403 (sometimes Raw limits too but different)
+      throw new Error(`Failed to fetch raw content: ${res.status} ${res.statusText}`);
+    }
+    return await res.json();
   }
 
   async verifyRepoAndBranch(ref: GithubRepoRef): Promise<void> {
