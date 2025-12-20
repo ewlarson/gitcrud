@@ -20,7 +20,7 @@ export const ResourceList: React.FC<ResourceListProps> = ({
 }) => {
     const [resources, setResources] = useState<Resource[]>([]);
     const [total, setTotal] = useState(0);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     // Search/Sort/Page State
     const [search, setSearch] = useState("");

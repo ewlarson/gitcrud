@@ -33,11 +33,13 @@ export interface Resource {
   dct_temporal_sm: string[];
   dct_issued_s?: string | null;
   gbl_dateRange_drsim: string[];
+  gbl_indexYear_im?: number | null;
 
   // Spatial
   dct_spatial_sm: string[];
   dcat_bbox?: string | null;
   locn_geometry?: string | null;
+  dcat_centroid?: string | null;
   gbl_georeferenced_b?: boolean | null;
 
   // Administrative
@@ -57,6 +59,7 @@ export interface Resource {
   dct_source_sm: string[];
   dct_isVersionOf_sm: string[];
   dct_replaces_sm: string[];
+  dct_isReplacedBy_sm: string[];
   dct_relation_sm: string[];
 
   // Bag for any unmodeled fields so we don't lose information.
@@ -93,6 +96,7 @@ export const REPEATABLE_STRING_FIELDS: string[] = [
   "dct_source_sm",
   "dct_isVersionOf_sm",
   "dct_replaces_sm",
+  "dct_isReplacedBy_sm",
   "dct_relation_sm",
 ];
 
@@ -104,8 +108,10 @@ export const SCALAR_FIELDS: string[] = [
   "gbl_mdVersion_s",
   "schema_provider_s",
   "dct_issued_s",
+  "gbl_indexYear_im",
   "dcat_bbox",
   "locn_geometry",
+  "dcat_centroid",
   "gbl_georeferenced_b",
   "gbl_wxsIdentifier_s",
   "gbl_suppressed_b",
@@ -113,6 +119,85 @@ export const SCALAR_FIELDS: string[] = [
   "dct_references_s", // kept only in JSON, not in resources table
   "gbl_mdModified_dt",
 ];
+
+export const CSV_HEADER_MAPPING: Record<string, string> = {
+  "Title": "dct_title_s",
+  "Alternative Title": "dct_alternative_sm",
+  "Description": "dct_description_sm",
+  "Language": "dct_language_sm",
+  "Display Note": "gbl_displayNote_sm",
+  "Creator": "dct_creator_sm",
+  "Publisher": "dct_publisher_sm",
+  "Provider": "schema_provider_s",
+  "Resource Class": "gbl_resourceClass_sm",
+  "Resource Type": "gbl_resourceType_sm",
+  "Subject": "dct_subject_sm",
+  "Theme": "dcat_theme_sm",
+  "Keyword": "dcat_keyword_sm",
+  "Temporal Coverage": "dct_temporal_sm",
+  "Date Issued": "dct_issued_s",
+  "Index Year": "gbl_indexYear_im",
+  "Date Range": "gbl_dateRange_drsim",
+  "Spatial Coverage": "dct_spatial_sm",
+  "Geometry": "locn_geometry",
+  "Bounding Box": "dcat_bbox",
+  "Centroid": "dcat_centroid",
+  "Georeferenced": "gbl_georeferenced_b",
+  "Relation": "dct_relation_sm",
+  "Member Of": "pcdm_memberOf_sm",
+  "Is Part Of": "dct_isPartOf_sm",
+  "Source": "dct_source_sm",
+  "Is Version Of": "dct_isVersionOf_sm",
+  "Replaces": "dct_replaces_sm",
+  "Is Replaced By": "dct_isReplacedBy_sm",
+  "Rights": "dct_rights_sm",
+  "Rights Holder": "dct_rightsHolder_sm",
+  "License": "dct_license_sm",
+  "Access Rights": "dct_accessRights_s",
+  "Format": "dct_format_s",
+  "File Size": "gbl_fileSize_s",
+  "WxS Identifier": "gbl_wxsIdentifier_s",
+  "ID": "id",
+  "Identifier": "dct_identifier_sm",
+  "Suppressed": "gbl_suppressed_b"
+};
+
+// OGM Reference URI Mappping for Export
+// Source: https://opengeometadata.org/reference-uris/
+export const REFERENCE_URI_MAPPING: Record<string, string> = {
+  // Services
+  "wms": "http://www.opengis.net/def/serviceType/ogc/wms",
+  "wfs": "http://www.opengis.net/def/serviceType/ogc/wfs",
+  "wcs": "http://www.opengis.net/def/serviceType/ogc/wcs",
+  "wmts": "http://www.opengis.net/def/serviceType/ogc/wmts",
+  "tile_map_service": "https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification",
+  "tms": "https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification", // Alias
+  "xyz_tiles": "https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames",
+
+  // Downloads
+  "download": "http://schema.org/downloadUrl",
+  "file": "http://schema.org/downloadUrl", // common alias
+
+  // Information / Metadata
+  "documentation": "http://schema.org/url",
+  "url": "http://schema.org/url", // generic
+  "metadata": "http://www.isotc211.org/schemas/2005/gmd/",
+  "fgdc": "http://www.opengis.net/cat/csw/csdgm",
+  "mods": "http://www.loc.gov/mods/v3",
+  "html": "http://www.w3.org/1999/xhtml",
+
+  // Manifests
+  "iiif": "http://iiif.io/api/image",
+  "iiif_presentation": "http://iiif.io/api/presentation#manifest",
+  "iiif_manifest": "http://iiif.io/api/presentation#manifest",
+  "oembed": "https://oembed.com",
+
+  // Esri
+  "feature_layer": "urn:x-esri:serviceType:ArcGIS#FeatureLayer",
+  "tiled_map_layer": "urn:x-esri:serviceType:ArcGIS#TiledMapLayer",
+  "dynamic_map_layer": "urn:x-esri:serviceType:ArcGIS#DynamicMapLayer",
+  "image_map_layer": "urn:x-esri:serviceType:ArcGIS#ImageMapLayer"
+};
 
 const REQUIRED_FIELDS = [
   "id",
@@ -166,11 +251,13 @@ export function resourceFromJson(raw: AardvarkJson): Resource {
 
     dct_temporal_sm: (raw["dct_temporal_sm"] as string[] | undefined) ?? [],
     dct_issued_s: (raw["dct_issued_s"] as string | undefined) ?? null,
+    gbl_indexYear_im: (raw["gbl_indexYear_im"] as number | undefined) ?? null,
     gbl_dateRange_drsim: (raw["gbl_dateRange_drsim"] as string[] | undefined) ?? [],
 
     dct_spatial_sm: (raw["dct_spatial_sm"] as string[] | undefined) ?? [],
     dcat_bbox: (raw["dcat_bbox"] as string | undefined) ?? null,
     locn_geometry: (raw["locn_geometry"] as string | undefined) ?? null,
+    dcat_centroid: (raw["dcat_centroid"] as string | undefined) ?? null,
     gbl_georeferenced_b: (raw["gbl_georeferenced_b"] as boolean | undefined) ?? null,
 
     dct_identifier_sm: (raw["dct_identifier_sm"] as string[] | undefined) ?? [],
@@ -187,6 +274,7 @@ export function resourceFromJson(raw: AardvarkJson): Resource {
     dct_source_sm: (raw["dct_source_sm"] as string[] | undefined) ?? [],
     dct_isVersionOf_sm: (raw["dct_isVersionOf_sm"] as string[] | undefined) ?? [],
     dct_replaces_sm: (raw["dct_replaces_sm"] as string[] | undefined) ?? [],
+    dct_isReplacedBy_sm: (raw["dct_isReplacedBy_sm"] as string[] | undefined) ?? [],
     dct_relation_sm: (raw["dct_relation_sm"] as string[] | undefined) ?? [],
 
     extra: {},
@@ -251,6 +339,7 @@ export function resourceToJson(resource: Resource): AardvarkJson {
     dct_source_sm: resource.dct_source_sm,
     dct_isVersionOf_sm: resource.dct_isVersionOf_sm,
     dct_replaces_sm: resource.dct_replaces_sm,
+    dct_isReplacedBy_sm: resource.dct_isReplacedBy_sm,
     dct_relation_sm: resource.dct_relation_sm,
   };
 
@@ -258,8 +347,10 @@ export function resourceToJson(resource: Resource): AardvarkJson {
   if (resource.dct_format_s) base["dct_format_s"] = resource.dct_format_s;
   if (resource.schema_provider_s) base["schema_provider_s"] = resource.schema_provider_s;
   if (resource.dct_issued_s) base["dct_issued_s"] = resource.dct_issued_s;
+  if (resource.gbl_indexYear_im !== null && resource.gbl_indexYear_im !== undefined) base["gbl_indexYear_im"] = resource.gbl_indexYear_im;
   if (resource.dcat_bbox) base["dcat_bbox"] = resource.dcat_bbox;
   if (resource.locn_geometry) base["locn_geometry"] = resource.locn_geometry;
+  if (resource.dcat_centroid) base["dcat_centroid"] = resource.dcat_centroid;
   if (resource.gbl_georeferenced_b !== null && resource.gbl_georeferenced_b !== undefined) base["gbl_georeferenced_b"] = resource.gbl_georeferenced_b;
   if (resource.gbl_wxsIdentifier_s) base["gbl_wxsIdentifier_s"] = resource.gbl_wxsIdentifier_s;
   if (resource.gbl_suppressed_b !== null && resource.gbl_suppressed_b !== undefined) base["gbl_suppressed_b"] = resource.gbl_suppressed_b;

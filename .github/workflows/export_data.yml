@@ -1,0 +1,30 @@
+name: Export DuckDB to JSON
+
+on:
+  push:
+    paths:
+      - "web/public/records.duckdb"
+  workflow_dispatch:
+
+jobs:
+  export-json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install duckdb pandas
+        
+      - name: Run Export Script
+        run: python scripts/export_duckdb_to_json.py web/public/records.duckdb metadata
+        
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-export DuckDB to JSONs [skip ci]"
+          file_pattern: 'metadata/*.json'

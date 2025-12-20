@@ -1,0 +1,296 @@
+import React, { useState } from "react";
+import { Resource, REPEATABLE_STRING_FIELDS, SCALAR_FIELDS, Distribution } from "../aardvark/model";
+import { TagInput } from "./TagInput";
+
+interface ResourceEditProps {
+    initialResource: Resource;
+    initialDistributions: Distribution[];
+    onSave: (resource: Resource, distributions: Distribution[]) => Promise<void>;
+    onCancel: () => void;
+    isSaving: boolean;
+    saveError: string | null;
+}
+
+export const ResourceEdit: React.FC<ResourceEditProps> = ({
+    initialResource,
+    initialDistributions,
+    onSave,
+    onCancel,
+    isSaving,
+    saveError,
+}) => {
+    const [resource, setResource] = useState<Resource>(initialResource);
+    const [distributions, setDistributions] = useState<Distribution[]>(initialDistributions || []);
+    const [activeTab, setActiveTab] = useState<"id" | "core" | "geo" | "admin" | "distributions" | "extra">("core");
+
+    const handleChange = (field: keyof Resource, value: any) => {
+        setResource((prev) => ({ ...prev, [field]: value }));
+    };
+
+    const handleArrayChange = (field: keyof Resource, values: string[]) => {
+        setResource((prev) => ({ ...prev, [field]: values }));
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave(resource, distributions);
+    };
+
+    // Distribution Handlers
+    const addDistribution = () => {
+        setDistributions([...distributions, { resource_id: resource.id, relation_key: "", url: "" }]);
+    };
+
+    const updateDistribution = (index: number, field: keyof Distribution, val: string) => {
+        const newDists = [...distributions];
+        newDists[index] = { ...newDists[index], [field]: val };
+        setDistributions(newDists);
+    };
+
+    const removeDistribution = (index: number) => {
+        const newDists = [...distributions];
+        newDists.splice(index, 1);
+        setDistributions(newDists);
+    };
+
+    const renderTextField = (label: string, field: keyof Resource, required = false) => (
+        <div className="mb-3">
+            <label className="block text-xs font-medium text-slate-300 mb-1">
+                {label} {required && <span className="text-red-400">*</span>}
+            </label>
+            <input
+                type="text"
+                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500"
+                value={String(resource[field] || "")}
+                onChange={(e) => handleChange(field, e.target.value)}
+            />
+        </div>
+    );
+
+    const renderTextArea = (label: string, field: keyof Resource) => (
+        <div className="mb-3">
+            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <textarea
+                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500 h-20"
+                value={String(resource[field] || "")}
+                onChange={(e) => handleChange(field, e.target.value)}
+            />
+        </div>
+    );
+
+    const renderTagInput = (label: string, field: string) => (
+        <div className="mb-3">
+            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <TagInput
+                value={(resource as any)[field] || []}
+                onChange={(vals) => handleArrayChange(field as keyof Resource, vals)}
+                fieldName={field}
+            />
+        </div>
+    );
+
+    const renderBoolSelect = (label: string, field: keyof Resource) => (
+        <div className="mb-3">
+            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <select
+                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500"
+                value={resource[field] === true ? "true" : resource[field] === false ? "false" : ""}
+                onChange={(e) => {
+                    const val = e.target.value;
+                    handleChange(field, val === "true" ? true : val === "false" ? false : null);
+                }}
+            >
+                <option value="">Unknown / Null</option>
+                <option value="true">True</option>
+                <option value="false">False</option>
+            </select>
+        </div>
+    );
+
+    return (
+        <form onSubmit={handleSubmit} className="flex flex-col h-full">
+            <div className="flex items-center gap-4 border-b border-slate-800 pb-4 mb-4">
+                <h2 className="text-lg font-semibold text-white">Edit Resource</h2>
+                <div className="flex gap-2 ml-auto">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-3 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-700 rounded hover:bg-slate-800"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={isSaving}
+                        className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-500 disabled:opacity-50"
+                    >
+                        {isSaving ? "Saving..." : "Save Changes"}
+                    </button>
+                </div>
+            </div>
+
+            {saveError && (
+                <div className="mb-4 p-3 bg-red-900/40 border border-red-800 rounded text-red-200 text-xs">
+                    Error saving: {saveError}
+                </div>
+            )}
+
+            {/* Tabs */}
+            <div className="flex gap-1 border-b border-slate-800 mb-4 overflow-x-auto">
+                {(["id", "core", "geo", "admin", "distributions", "extra"] as const).map((tab) => (
+                    <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setActiveTab(tab)}
+                        className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${activeTab === tab
+                                ? "border-indigo-500 text-indigo-400"
+                                : "border-transparent text-slate-500 hover:text-slate-300"
+                            }`}
+                    >
+                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    </button>
+                ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2">
+                {activeTab === "id" && (
+                    <div className="space-y-4">
+                        {renderTextField("ID", "id", true)}
+                        {renderTextField("Metadata Version", "gbl_mdVersion_s")}
+                        {renderBoolSelect("Suppressed (Hidden)", "gbl_suppressed_b")}
+                        {renderTextField("Schema Provider", "schema_provider_s")}
+                    </div>
+                )}
+
+                {activeTab === "core" && (
+                    <div className="space-y-4">
+                        {renderTextField("Title", "dct_title_s", true)}
+                        {renderTagInput("Alternative Title", "dct_alternative_sm")}
+                        {renderTagInput("Description", "dct_description_sm")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Resource Class", "gbl_resourceClass_sm")}
+                        {renderTagInput("Resource Type", "gbl_resourceType_sm")}
+                        {renderTextField("Format", "dct_format_s")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Subject", "dct_subject_sm")}
+                        {renderTagInput("Theme", "dcat_theme_sm")}
+                        {renderTagInput("Keyword", "dcat_keyword_sm")}
+                        {renderTagInput("Language", "dct_language_sm")}
+                    </div>
+                )}
+
+                {activeTab === "geo" && (
+                    <div className="space-y-4">
+                        {renderTextField("Date Issued", "dct_issued_s")}
+                        {renderTextField("Index Year", "gbl_indexYear_im")}
+                        {renderTagInput("Date Range", "gbl_dateRange_drsim")}
+                        {renderTagInput("Temporal Coverage", "dct_temporal_sm")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Spatial Coverage", "dct_spatial_sm")}
+                        {renderTextArea("Geometry (WKT/Envelope)", "locn_geometry")}
+                        {renderTextArea("Bounding Box", "dcat_bbox")}
+                        {renderTextField("Centroid", "dcat_centroid")}
+                        {renderBoolSelect("Georeferenced", "gbl_georeferenced_b")}
+                    </div>
+                )}
+
+                {activeTab === "admin" && (
+                    <div className="space-y-4">
+                        {renderTextField("Access Rights", "dct_accessRights_s", true)}
+                        {renderTagInput("Rights", "dct_rights_sm")}
+                        {renderTagInput("Rights Holder", "dct_rightsHolder_sm")}
+                        {renderTagInput("License", "dct_license_sm")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Creator", "dct_creator_sm")}
+                        {renderTagInput("Publisher", "dct_publisher_sm")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Identifier", "dct_identifier_sm")}
+                        {renderTextField("WxS Identifier", "gbl_wxsIdentifier_s")}
+                        {renderTextField("File Size", "gbl_fileSize_s")}
+
+                        <hr className="border-slate-800 my-4" />
+
+                        {renderTagInput("Relation", "dct_relation_sm")}
+                        {renderTagInput("Member Of", "pcdm_memberOf_sm")}
+                        {renderTagInput("Is Part Of", "dct_isPartOf_sm")}
+                        {renderTagInput("Source", "dct_source_sm")}
+                        {renderTagInput("Is Version Of", "dct_isVersionOf_sm")}
+                        {renderTagInput("Replaces", "dct_replaces_sm")}
+                        {renderTagInput("Is Replaced By", "dct_isReplacedBy_sm")}
+                    </div>
+                )}
+
+                {activeTab === "distributions" && (
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-400">Manage download links, WMS services, etc.</p>
+                            <button type="button" onClick={addDistribution} className="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-slate-600">
+                                + Add Item
+                            </button>
+                        </div>
+
+                        {distributions.length === 0 ? (
+                            <div className="p-4 bg-slate-900 rounded border border-slate-800 text-center text-xs text-slate-500">
+                                No distributions defined.
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                {distributions.map((dist, idx) => (
+                                    <div key={idx} className="flex gap-2 items-start bg-slate-900/50 p-2 rounded border border-slate-800">
+                                        <div className="flex-1">
+                                            <label className="block text-[10px] text-slate-500 mb-0.5">Type (Relation)</label>
+                                            <input
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs"
+                                                placeholder="e.g. download, wms"
+                                                value={dist.relation_key}
+                                                onChange={(e) => updateDistribution(idx, "relation_key", e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="flex-[3]">
+                                            <label className="block text-[10px] text-slate-500 mb-0.5">URL</label>
+                                            <input
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs"
+                                                placeholder="https://..."
+                                                value={dist.url}
+                                                onChange={(e) => updateDistribution(idx, "url", e.target.value)}
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => removeDistribution(idx)}
+                                            className="mt-4 text-slate-500 hover:text-red-400"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {activeTab === "extra" && (
+                    <div className="space-y-4">
+                        {renderTagInput("Display Note", "gbl_displayNote_sm")}
+                        <div className="p-4 bg-slate-900 rounded border border-slate-800 text-xs font-mono text-slate-400">
+                            {JSON.stringify(resource.extra || {}, null, 2)}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                            Extra fields are read-only in this editor version.
+                        </p>
+                    </div>
+                )}
+            </div>
+        </form>
+    );
+};

@@ -1,138 +1,239 @@
-// Thin wrapper around DuckDB-WASM with IndexedDB persistence.
-// DuckDB is the single source of truth for all data operations.
-
 import * as duckdb from "@duckdb/duckdb-wasm";
-import { Resource, Distribution, resourceToJson } from "../aardvark/model";
-import { resourceFromRow, extractDistributionsFromJson } from "../aardvark/mapping";
-
-// Import DuckDB assets using Vite's ?url and ?worker syntax
+import { Resource, resourceToJson, SCALAR_FIELDS, REPEATABLE_STRING_FIELDS, CSV_HEADER_MAPPING, Distribution, REFERENCE_URI_MAPPING } from "../aardvark/model";
+import { resourceFromRow } from "../aardvark/mapping";
 import workerUrl from "@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url";
 import wasmUrl from "@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url";
+import mvpWorkerUrl from "@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url";
+import mvpWasmUrl from "@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url";
 
+import JSZip from "jszip";
+
+const DB_FILENAME = "records.duckdb";
 const INDEXEDDB_NAME = "aardvark-duckdb";
 const INDEXEDDB_STORE = "database";
-const INDEXEDDB_VERSION = 1;
 
 export interface DuckDbContext {
   db: duckdb.AsyncDuckDB;
+  conn: duckdb.AsyncDuckDBConnection;
 }
 
-let cached: Promise<DuckDbContext> | null = null;
-let duckdbAvailable = true;
+let cached: Promise<DuckDbContext | null> | null = null;
+let initError: Error | null = null;
 
+// Initialize DuckDB
+// Initialize DuckDB
 export async function getDuckDbContext(): Promise<DuckDbContext | null> {
-  if (!duckdbAvailable) return null;
-
-  if (cached) {
-    try {
-      return await cached;
-    } catch {
-      duckdbAvailable = false;
-      cached = null;
-      return null;
-    }
-  }
+  if (cached) return cached;
 
   cached = (async () => {
     try {
-      // Create worker from the imported URL
-      const worker = new Worker(workerUrl, { type: "module" });
+      const db = await initializeDuckDB();
 
-      const logger = new duckdb.ConsoleLogger();
-      const db = new duckdb.AsyncDuckDB(logger, worker);
+      // Always start with memory to ensure we have a valid interface
+      await db.open({ path: ':memory:' });
 
-      // Instantiate with the imported WASM URL
-      await db.instantiate(wasmUrl);
+      // Attempt to load from IndexedDB
+      const idbBuffer = await loadFromIndexedDB();
 
-      // Try to restore from IndexedDB
-      await restoreDuckDbFromIndexedDB(db);
+      if (idbBuffer) {
+        console.log("Restoring DB from IndexedDB...");
+        try {
+          await db.registerFileBuffer(DB_FILENAME, idbBuffer);
+        } catch (e) {
+          console.warn("Failed to register IDB buffer", e);
+        }
+      } else {
+        // Try server fetch if IDB failed/empty
+        console.log("Fetching DB from server...");
+        try {
+          const response = await fetch(`/${DB_FILENAME}`);
+          if (response.ok) {
+            const buffer = new Uint8Array(await response.arrayBuffer());
+            await db.registerFileBuffer(DB_FILENAME, buffer);
+            console.log("Opened DB from server.");
+          }
+        } catch (e) {
+          console.warn("Server DB fetch failed or invalid", e);
+        }
+      }
 
-      return { db };
-    } catch (err) {
-      duckdbAvailable = false;
-      cached = null;
-      console.warn("DuckDB-WASM failed to initialize", err);
-      throw err;
+      const conn = await db.connect();
+
+      // Attach the persistent file. This creates it if it doesn't exist.
+      // If it exists but is corrupt, ATTACH might fail.
+      let attached = false;
+      try {
+        await conn.query(`ATTACH '${DB_FILENAME}'`);
+        attached = true;
+      } catch (err: any) {
+        console.warn("Used existing file but ATTACH failed (corruption?). Starting fresh.", err);
+        // Corruption? Drop file and retry (creates new)
+        try { await db.dropFile(DB_FILENAME); } catch { }
+        try {
+          await conn.query(`ATTACH '${DB_FILENAME}'`);
+          attached = true;
+        } catch (retryErr) {
+          console.error("Retried ATTACH failed", retryErr);
+        }
+      }
+
+      if (attached) {
+        // Set as default so queries don't need 'records.' prefix
+        await conn.query(`USE records`);
+      } else {
+        console.warn("Could not ATTACH persistent DB. Running purely in-memory.");
+      }
+
+      await ensureSchema(conn);
+      return { db, conn };
+    } catch (err: any) {
+      console.error("DuckDB initialization failed", err);
+      initError = err;
+      return null;
     }
   })();
 
-  try {
-    return await cached;
-  } catch {
-    return null;
-  }
+  return cached;
 }
 
-// Query helpers for reading from DuckDB
-
-export async function queryResources(): Promise<Resource[]> {
-  let conn: any = null;
+async function initializeDuckDB(): Promise<duckdb.AsyncDuckDB> {
   try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return [];
-    conn = await (ctx.db as any).connect();
-
-    // Check if resources table exists
-    const tablesResult = await conn.query("SHOW TABLES");
-    const tables = tablesResult.toArray().map((row: any) => row.name);
-    if (!tables.includes("resources")) {
-      return [];
-    }
-
-    // Query all resources
-    const resourcesResult = await conn.query("SELECT * FROM resources ORDER BY id");
-    const resourceRows = resourcesResult.toArray().map((row: any) => {
-      // Handle Arrow Proxy row
-      const r = row.toJSON ? row.toJSON() : row;
-      const obj: Record<string, string> = {};
-      for (const key of Object.keys(r)) {
-        obj[key] = r[key] ?? "";
-      }
-      return obj;
-    });
-
-    // Query all distributions
-    const distributionsResult = await conn.query("SELECT * FROM distributions ORDER BY resource_id, relation_key");
-    const distributionRows = distributionsResult.toArray().map((row: any) => {
-      const r = row.toJSON ? row.toJSON() : row;
-      return {
-        resource_id: r.resource_id ?? "",
-        relation_key: r.relation_key ?? "",
-        url: r.url ?? "",
-      };
-    });
-
-    // Group distributions by resource_id
-    const distributionsByResourceId = new Map<string, Distribution[]>();
-    for (const dist of distributionRows) {
-      if (!distributionsByResourceId.has(dist.resource_id)) {
-        distributionsByResourceId.set(dist.resource_id, []);
-      }
-      distributionsByResourceId.get(dist.resource_id)!.push(dist);
-    }
-
-    // Convert rows to Resource objects
-    const resources: Resource[] = [];
-    for (const row of resourceRows) {
-      const resourceId = row.id ? String(row.id) : "";
-      if (!resourceId) continue; // Skip rows without ID
-      const distributions = distributionsByResourceId.get(resourceId) || [];
-      const resource = resourceFromRow(row, distributions);
-      resources.push(resource);
-    }
-
-    return resources;
+    return await createDB(workerUrl, wasmUrl);
   } catch (err) {
-    console.warn("DuckDB query failed, returning empty array", err);
-    return [];
-  } finally {
+    console.warn("DuckDB EH initialization failed, trying MVP...", err);
     try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
+      return await createDB(mvpWorkerUrl, mvpWasmUrl);
+    } catch (mvpErr) {
+      console.error("DuckDB MVP initialization failed", mvpErr);
+      throw err; // Throw the original error or the new one? Let's throw the original to keep context, or mvpErr.
     }
   }
 }
+
+async function createDB(wUrl: string, waUrl: string): Promise<duckdb.AsyncDuckDB> {
+  const worker = new Worker(wUrl, { type: "module" });
+  const logger = new duckdb.ConsoleLogger();
+  const db = new duckdb.AsyncDuckDB(logger, worker);
+  try {
+    await db.instantiate(waUrl);
+    return db;
+  } catch (err) {
+    worker.terminate();
+    throw err;
+  }
+}
+
+async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
+  // resources table (scalars)
+  const scalarCols = SCALAR_FIELDS.map(f => `"${f}" VARCHAR`).join(", ");
+  await conn.query(`CREATE TABLE IF NOT EXISTS resources (${scalarCols})`);
+
+  // resources_mv (multivalue)
+  await conn.query(`CREATE TABLE IF NOT EXISTS resources_mv (id VARCHAR, field VARCHAR, val VARCHAR)`);
+
+  // distributions
+  await conn.query(`CREATE TABLE IF NOT EXISTS distributions (resource_id VARCHAR, relation_key VARCHAR, url VARCHAR)`);
+}
+
+export async function exportAardvarkJsonZip(): Promise<Blob | null> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return null;
+  const { conn } = ctx;
+
+  const zip = new JSZip();
+
+  // 1. Fetch Key Data
+  const resources = await queryResources();
+  const distRes = await conn.query("SELECT * FROM distributions");
+  const allDistributions = distRes.toArray().map((r: any) => ({
+    resource_id: r.resource_id,
+    relation_key: r.relation_key,
+    url: r.url
+  }));
+
+  // 2. Process each resource
+  let count = 0;
+  for (const res of resources) {
+    if (!res.id) continue;
+
+    // Find distributions for this resource
+    const resDistributions = allDistributions.filter((d: any) => d.resource_id === res.id);
+
+    // Build base JSON (flat fields)
+    // Note: We reconstruct dct_references_s from the distributions table below.
+
+    // Use resourceToJson to get a clean, flattened Aardvark JSON object
+    // This handles flattening 'extra' fields and ensuring correct types
+    let jsonResource: any = resourceToJson(res);
+
+    // Construct dct_references_s object
+    if (resDistributions.length > 0) {
+      const references: Record<string, string> = {};
+      for (const d of resDistributions) {
+        // Map relation_key to URI
+        let key = d.relation_key;
+        if (REFERENCE_URI_MAPPING[d.relation_key?.toLowerCase()]) {
+          key = REFERENCE_URI_MAPPING[d.relation_key.toLowerCase()];
+        }
+
+        // If mapping failed, maybe use raw key? Or verify expectations.
+        // Standard OGM schema keys are URIs.
+        if (d.url) {
+          references[key] = d.url;
+        }
+      }
+      // Add stringified references to the object
+      // Aardvark spec says `dct_references_s` is a JSON String.
+      jsonResource.dct_references_s = JSON.stringify(references);
+    }
+
+    // Clean up Extra (remove nulls, internals) through a clean clone logic if needed.
+    // For now, assume `res` is mostly clean.
+
+    // Add to Zip
+    // Filename: ID.json
+    const filename = `${res.id}.json`;
+    zip.file(filename, JSON.stringify(jsonResource, null, 2));
+    count++;
+  }
+
+  console.log(`Zipped ${count} resources.`);
+  return await zip.generateAsync({ type: "blob" });
+}
+export async function saveDb() {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return;
+
+  // Force flush to virtual disk
+  try { await ctx.conn.query("CHECKPOINT"); } catch (e) { console.warn("Checkpoint failed", e); }
+
+  const buffer = await ctx.db.copyFileToBuffer(DB_FILENAME);
+  if (buffer.byteLength === 0) {
+    console.warn("Attempted to save 0-byte DB. Skipping.");
+    return;
+  }
+  await saveToIndexedDB(buffer);
+  console.log("DB Saved to IndexedDB");
+}
+
+export async function exportDbBlob(): Promise<Blob | null> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return null;
+  const buffer = await ctx.db.copyFileToBuffer(DB_FILENAME);
+  // @ts-ignore
+  return new Blob([buffer], { type: "application/octet-stream" });
+}
+
+export async function clearDuckDbFromIndexedDB(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(INDEXEDDB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => console.warn("Delete blocked");
+  });
+}
+
+// *** Query Functions ***
 
 export interface SearchResult {
   resources: Resource[];
@@ -146,95 +247,94 @@ export async function searchResources(
   sortOrder: "asc" | "desc" = "asc",
   search: string = ""
 ): Promise<SearchResult> {
-  let conn: any = null;
-  try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return { resources: [], total: 0 };
-    conn = await (ctx.db as any).connect();
+  const ctx = await getDuckDbContext();
+  if (!ctx) return { resources: [], total: 0 };
+  const { conn } = ctx;
 
-    const tablesResult = await conn.query("SHOW TABLES");
-    const tables = tablesResult.toArray().map((row: any) => row.name);
-    if (!tables.includes("resources")) return { resources: [], total: 0 };
-
-    // Get table schema to verify columns exist
-    const schemaResult = await conn.query("DESCRIBE resources");
-    const columns = schemaResult.toArray().map((row: any) => row.column_name);
-
-    // Sanitize sort column
-    const allowedSorts = ["id", "dct_title_s", "gbl_resourceClass_sm", "dct_accessRights_s", "gbl_mdVersion_s"];
-    let safeSort = allowedSorts.includes(sortBy) ? sortBy : "id";
-    if (!columns.includes(safeSort)) safeSort = "id"; // Fallback if column doesn't exist
-    const safeOrder = sortOrder === "desc" ? "DESC" : "ASC";
-
-    // Build WHERE clause
-    let whereClause = "1=1";
-
-    // We construct the search condition dynamically based on available columns
-    if (search) {
-      const safeSearch = search.replace(/'/g, "''");
-      const conditions: string[] = [];
-
-      if (columns.includes("id")) {
-        conditions.push(`COALESCE(id, '') ILIKE '%${safeSearch}%'`);
-      }
-      if (columns.includes("dct_title_s")) {
-        conditions.push(`COALESCE(dct_title_s, '') ILIKE '%${safeSearch}%'`);
-      }
-      if (columns.includes("gbl_resourceClass_sm")) {
-        // Handle list column safely
-        // Check if list contains the search term OR cast to text contains it
-        // list_contains might fail on null? DuckDB usually propagates null.
-        // COALESCE on list: COALESCE(gbl_resourceClass_sm, []) 
-        // But simpler: just cast to text and search.
-        // list_contains is stricter (exact match element). 
-        // User wants partial search likely.
-        // Array to string is safer for partial.
-        conditions.push(`array_to_string(gbl_resourceClass_sm, ' ') ILIKE '%${safeSearch}%'`);
-      }
-      if (columns.includes("dct_description_sm")) {
-        conditions.push(`array_to_string(dct_description_sm, ' ') ILIKE '%${safeSearch}%'`);
-      }
-
-      if (conditions.length > 0) {
-        whereClause += ` AND (${conditions.join(" OR ")})`;
-      }
-    }
-
-    const totalRes = await conn.query(`SELECT COUNT(*) as total FROM resources WHERE ${whereClause}`);
-    const total = Number(totalRes.toArray()[0].total);
-
-    // Get Page
-    const offset = (page - 1) * pageSize;
-    const dataSql = `
-      SELECT * FROM resources 
-      WHERE ${whereClause}
-      ORDER BY "${safeSort}" ${safeOrder}
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
-
-    const resourcesResult = await conn.query(dataSql);
-    const resourceRows = resourcesResult.toArray().map((row: any) => {
-      const r = row.toJSON ? row.toJSON() : row;
-      const obj: Record<string, string> = {};
-      for (const key of Object.keys(r)) {
-        obj[key] = r[key] ?? "";
-      }
-      return obj;
-    });
-
-    const resources: Resource[] = resourceRows.map((row: any) => resourceFromRow(row, []));
-
-    return { resources, total };
-  } catch (err) {
-    console.warn("DuckDB search failed", err);
-    return { resources: [], total: 0 };
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
+  // Build WHERE clause
+  let where = "1=1";
+  if (search) {
+    const safeSearch = search.replace(/'/g, "''");
+    where += ` AND (
+        id ILIKE '%${safeSearch}%' OR 
+        dct_title_s ILIKE '%${safeSearch}%' OR
+        EXISTS (SELECT 1 FROM resources_mv mv WHERE mv.id = resources.id AND mv.val ILIKE '%${safeSearch}%')
+    )`;
   }
+
+  // Count
+  const countRes = await conn.query(`SELECT COUNT(*) as total FROM resources WHERE ${where}`);
+  const total = Number(countRes.toArray()[0].total);
+
+  // Fetch IDs first for paging
+  const safeSort = sortBy.replace(/[^a-zA-Z0-9_]/g, "");
+  const offset = (page - 1) * pageSize;
+
+  const idsSql = `
+    SELECT id FROM resources 
+    WHERE ${where}
+    ORDER BY "${safeSort}" ${sortOrder.toUpperCase()}
+    LIMIT ${pageSize} OFFSET ${offset}
+`;
+  const idsRes = await conn.query(idsSql);
+  const ids = idsRes.toArray().map((r: any) => r.id);
+
+  if (ids.length === 0) return { resources: [], total };
+
+  // Now fetch full data for these IDs
+  const idList = ids.map((id: string) => `'${id}'`).join(",");
+
+  const scalarSql = `SELECT * FROM resources WHERE id IN (${idList})`;
+  const mvSql = `SELECT * FROM resources_mv WHERE id IN (${idList})`;
+  const distSql = `SELECT * FROM distributions WHERE resource_id IN (${idList})`;
+
+  const [scalarRes, mvRes, distRes] = await Promise.all([
+    conn.query(scalarSql),
+    conn.query(mvSql),
+    conn.query(distSql)
+  ]);
+
+  const scalars = scalarRes.toArray();
+  const mvs = mvRes.toArray();
+  const dists = distRes.toArray();
+
+  const mvMap = new Map<string, Array<{ field: string, val: string }>>();
+  for (const row of mvs) {
+    if (!mvMap.has(row.id)) mvMap.set(row.id, []);
+    mvMap.get(row.id)?.push(row);
+  }
+
+  const distMap = new Map<string, any[]>();
+  for (const row of dists) {
+    if (!distMap.has(row.resource_id)) distMap.set(row.resource_id, []);
+    distMap.get(row.resource_id)?.push(row);
+  }
+
+  const resourceMap = new Map<string, Resource>();
+  for (const row of scalars) {
+    const r: any = {};
+    for (const k of SCALAR_FIELDS) {
+      r[k] = row[k];
+    }
+
+    const myMvs = mvMap.get(r.id) || [];
+    for (const mv of myMvs) {
+      if (!r[mv.field]) r[mv.field] = [];
+      r[mv.field].push(mv.val);
+    }
+
+    const myDists = distMap.get(r.id) || [];
+    resourceMap.set(r.id, resourceFromRow(r, myDists));
+  }
+
+  const resources = ids.map((id: string) => resourceMap.get(id)!).filter(Boolean);
+
+  return { resources, total };
+}
+
+export async function queryResources(): Promise<Resource[]> {
+  const { resources } = await searchResources(1, 100000);
+  return resources;
 }
 
 export async function getDistinctValues(
@@ -242,434 +342,715 @@ export async function getDistinctValues(
   search: string = "",
   limit: number = 20
 ): Promise<string[]> {
-  let conn: any = null;
+  const ctx = await getDuckDbContext();
+  if (!ctx) return [];
+  const { conn } = ctx;
+
+  const safeCol = column.replace(/[^a-zA-Z0-9_]/g, "");
+  const safeSearch = search.replace(/'/g, "''");
+
+  // Check if scalar or MV
+  let sql = "";
+  if (SCALAR_FIELDS.includes(safeCol) || safeCol === 'id') {
+    sql = `
+    SELECT DISTINCT "${safeCol}" as val 
+    FROM resources 
+    WHERE "${safeCol}" ILIKE '%${safeSearch}%'
+    LIMIT ${limit}
+  `;
+  } else {
+    // MV
+    sql = `
+    SELECT DISTINCT val 
+    FROM resources_mv 
+    WHERE field = '${safeCol}' AND val ILIKE '%${safeSearch}%'
+    LIMIT ${limit}
+  `;
+  }
+
   try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return [];
-    conn = await (ctx.db as any).connect();
-
-    // Check if table exists
-    const tablesResult = await conn.query("SHOW TABLES");
-    const tables = tablesResult.toArray().map((row: any) => row.name);
-    if (!tables.includes("resources")) return [];
-
-    // Safe column check (basic SQL injection prevention for field names)
-    // We only allow alphanumeric + underscore
-    if (!/^[a-zA-Z0-9_]+$/.test(column)) {
-      console.warn("Invalid column name for distinct values", column);
-      return [];
-    }
-
-    // Query distinct values by splitting pipe-delimited strings
-    // We use unnest(string_split(column, '|')) to get individual values
-    // Then trim whitespace and filter empty
-    const sql = `
-      WITH split_values AS (
-        SELECT unnest(string_split("${column}", '|')) as val
-        FROM resources
-        WHERE "${column}" IS NOT NULL AND "${column}" != ''
-      )
-      SELECT DISTINCT trim(val) as val 
-      FROM split_values 
-      WHERE val ILIKE ? AND val != ''
-      ORDER BY val 
-      LIMIT ?
-    `;
-
-    const stmt = await conn.prepare(sql);
-    const result = await stmt.query(`%${search}%`, limit);
-    const rows = result.toArray();
-    await stmt.close();
-
-    return rows.map((r: any) => String(r.val));
-  } catch (err) {
-    console.warn(`Failed to get distinct values for ${column}`, err);
+    const res = await conn.query(sql);
+    return res.toArray().map((r: any) => String(r.val));
+  } catch (e) {
+    console.warn("getDistinctValues failed", e);
     return [];
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close
-    }
   }
 }
+
+export async function executeQuery(sql: string): Promise<Record<string, any>[]> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return [];
+  const { conn } = ctx;
+  try {
+    const res = await conn.query(sql);
+    return res.toArray().map((row: any) => {
+      const r: any = {};
+      // Arrow row to obj
+      if (row.toJSON) return row.toJSON();
+      // manual
+      for (const key of Object.keys(row)) {
+        r[key] = row[key];
+      }
+      return r;
+    });
+  } catch (e) {
+    console.warn("executeQuery failed", e);
+    return [];
+  }
+}
+
 
 export async function queryResourceById(id: string): Promise<Resource | null> {
-  let conn: any = null;
-  try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return null;
-    conn = await (ctx.db as any).connect();
+  const ctx = await getDuckDbContext();
+  if (!ctx) return null;
+  const { conn } = ctx;
 
-    const stmt = await conn.prepare("SELECT * FROM resources WHERE id = ?");
-    const result = await stmt.query(id);
-    const rows = result.toArray();
-    await stmt.close();
-    if (rows.length === 0) return null;
+  const safeId = id.replace(/'/g, "''");
 
-    const row = rows[0];
-    const r = row.toJSON ? row.toJSON() : row;
-    const obj: Record<string, string> = {};
-    for (const key of Object.keys(r)) {
-      obj[key] = r[key] ?? "";
-    }
+  // Check if ID exists
+  const res = await conn.query(`SELECT id FROM resources WHERE id = '${safeId}'`);
+  if (res.toArray().length === 0) return null;
 
-    // Get distributions for this resource
-    const distStmt = await conn.prepare("SELECT * FROM distributions WHERE resource_id = ?");
-    const distResult = await distStmt.query(id);
-    await distStmt.close();
-    const distributions = distResult.toArray().map((row: any) => {
-      const r = row.toJSON ? row.toJSON() : row;
-      return {
-        resource_id: r.resource_id ?? "",
-        relation_key: r.relation_key ?? "",
-        url: r.url ?? "",
-      };
-    });
+  // Fetch full
+  const scalarSql = `SELECT * FROM resources WHERE id = '${safeId}'`;
+  const mvSql = `SELECT * FROM resources_mv WHERE id = '${safeId}'`;
+  const distSql = `SELECT * FROM distributions WHERE resource_id = '${safeId}'`;
 
-    return resourceFromRow(obj, distributions);
-  } catch (err) {
-    console.warn("DuckDB query by ID failed", err);
-    return null;
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
+  const [scalarRes, mvRes, distRes] = await Promise.all([
+    conn.query(scalarSql),
+    conn.query(mvSql),
+    conn.query(distSql)
+  ]);
+
+  const scalarRows = scalarRes.toArray();
+  if (scalarRows.length === 0) return null;
+  const scalarRow = scalarRows[0];
+
+  const mvs = mvRes.toArray();
+  const dists = distRes.toArray();
+
+  const r: any = {};
+  for (const k of SCALAR_FIELDS) {
+    r[k] = scalarRow[k];
   }
+
+  for (const mv of mvs) {
+    if (!r[mv.field]) r[mv.field] = [];
+    r[mv.field].push(mv.val);
+  }
+
+  return resourceFromRow(r, dists);
 }
 
-export async function queryDistributions(resourceId?: string): Promise<Distribution[]> {
-  let conn: any = null;
+// *** Import Function ***
+
+export async function importCsv(file: File): Promise<{ success: boolean, message: string, count?: number }> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return { success: false, message: `DB not available${initError ? `: ${initError.message}` : ""}` };
+  const { db, conn } = ctx;
+
   try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return [];
-    conn = await (ctx.db as any).connect();
+    await db.registerFileHandle(file.name, file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
 
-    const sql = resourceId
-      ? "SELECT * FROM distributions WHERE resource_id = ? ORDER BY relation_key"
-      : "SELECT * FROM distributions ORDER BY resource_id, relation_key";
-    const params = resourceId ? [resourceId] : [];
+    const tempTable = `temp_${Date.now()}`;
+    await conn.query(`CREATE TABLE ${tempTable} AS SELECT * FROM read_csv_auto('${file.name}', all_varchar=true)`);
 
-    let result;
-    if (resourceId) {
-      const stmt = await conn.prepare(sql);
-      result = await stmt.query(resourceId);
-      await stmt.close();
-    } else {
-      result = await conn.query(sql);
+    const schemaRes = await conn.query(`DESCRIBE ${tempTable}`);
+    // Verify headers to detect type
+    const headerRes = await conn.query(`SELECT * FROM ${tempTable} LIMIT 0`);
+    const csvHeaders = headerRes.schema.fields.map(f => f.name);
+
+    console.log("CSV Headers:", csvHeaders);
+
+    // Heuristic: Is this a Distributions CSV?
+    // Expect: ID, Type, URL. (Label optional). And commonly NOT "Title" or "dct_title_s"
+    const hasDistId = csvHeaders.includes("ID");
+    const hasType = csvHeaders.includes("Type");
+    const hasUrl = csvHeaders.includes("URL");
+    const hasTitle = csvHeaders.includes("Title") || csvHeaders.includes("dct_title_s");
+
+    if (hasDistId && hasType && hasUrl && !hasTitle) {
+      console.log("Detected Distributions CSV.");
+
+      // Insert into distributions table
+      // Schema: resource_id | relation_key | url
+      // CSV: ID | Type | URL
+
+      // Count before
+      const preCount = await conn.query("SELECT count(*) as c FROM distributions");
+      console.log(`Rows in distributions before insert: ${preCount.toArray()[0].c}`);
+
+      await conn.query(`
+        INSERT INTO distributions (resource_id, relation_key, url)
+        SELECT "ID", "Type", "URL" FROM ${tempTable}
+    `);
+
+      const postCount = await conn.query("SELECT count(*) as c FROM distributions");
+      const added = Number(postCount.toArray()[0].c) - Number(preCount.toArray()[0].c);
+
+      await saveDb();
+
+      return { success: true, message: `Imported ${added} distributions.`, count: added };
     }
-    return result.toArray().map((row: any) => {
-      const r = row.toJSON ? row.toJSON() : row;
-      return {
-        resource_id: r.resource_id ?? "",
-        relation_key: r.relation_key ?? "",
-        url: r.url ?? "",
-      };
-    });
-  } catch (err) {
-    console.warn("DuckDB query distributions failed", err);
-    return [];
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
-  }
-}
 
-// Import Parquet file from URL into a table
-export async function importParquetFromUrl(url: string, tableName: string): Promise<boolean> {
-  let conn: any = null;
-  try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return false;
-    conn = await (ctx.db as any).connect();
+    // Otherwise, assume Resources CSV (existing logic)
+    console.log("Detected Resources CSV.");
 
-    // Check if table exists, if so drop it
-    await conn.query(`DROP TABLE IF EXISTS ${tableName}`);
+    const columns = schemaRes.toArray().map((r: any) => r.column_name);
 
-    // Create table from parquet
-    // DuckDB WASM supports reading from HTTP URLs directly if they are accessible (CORS)
-    await conn.query(`CREATE TABLE ${tableName} AS SELECT * FROM read_parquet('${url}')`);
-
-    // Ensure distributions table exists to prevent query errors
-    await conn.query(`CREATE TABLE IF NOT EXISTS distributions (resource_id TEXT, relation_key TEXT, url TEXT)`);
-
-    return true;
-  } catch (err) {
-    console.warn(`Failed to import parquet from ${url}`, err);
-    return false;
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
-  }
-}
-
-// Execute arbitrary SQL query and return results as array of objects
-export async function executeQuery(sql: string, params: any[] = []): Promise<Record<string, any>[]> {
-  let conn: any = null;
-  try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) return [];
-    conn = await (ctx.db as any).connect();
-
-    // For executeQuery, we usually run simple queries. 
-    // If params are strictly used for binding, we try prepare.
-    let result;
-    if (params && params.length > 0) {
-      const stmt = await conn.prepare(sql);
-      result = await stmt.query(...params);
-      await stmt.close();
-    } else {
-      result = await conn.query(sql);
-    }
-    const rows = result.toArray();
-    return rows.map((row: any) => {
-      const r = row.toJSON ? row.toJSON() : row;
-      const obj: Record<string, any> = {};
-      for (const key of Object.keys(r)) {
-        obj[key] = r[key];
-      }
-      return obj;
-    });
-  } catch (err) {
-    console.warn("DuckDB executeQuery failed", err);
-    return [];
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
-  }
-}
-
-// Export DuckDB database to binary blob
-export async function exportDuckDbToBlob(): Promise<Blob> {
-  let conn: any = null;
-  try {
-    const ctx = await getDuckDbContext();
-    if (!ctx || !ctx.db) {
-      throw new Error("DuckDB not available");
-    }
-    conn = await (ctx.db as any).connect();
-
-    try {
-      // Export the database to a file
-      await conn.query("EXPORT DATABASE '/tmp/export' (FORMAT PARQUET)");
-
-      // For DuckDB-WASM, we need to use COPY TO to get the data
-      // Actually, DuckDB-WASM doesn't support direct file export like that.
-      // We'll need to serialize the tables manually or use a different approach.
-      // Let's use COPY TO with a format we can read back.
-
-      // Alternative: Serialize the entire database state
-      // DuckDB-WASM doesn't have a direct "export database" API, so we'll
-      // need to use COPY TO for each table and reconstruct, or use the connection's
-      // ability to serialize.
-
-      // For now, let's create a custom format: JSON with table schemas and data
-      const tables = ["resources", "distributions"];
-      const exportData: any = {};
-
-      for (const table of tables) {
-        const schemaResult = await conn.query(`DESCRIBE ${table}`);
-        const schema = schemaResult.toArray().map((row: any) => {
-          const r = row.toJSON ? row.toJSON() : row;
-          return {
-            column: r.column_name,
-            type: r.column_type,
-          };
-        });
-
-        const dataResult = await conn.query(`SELECT * FROM ${table}`);
-        const data = dataResult.toArray().map((row: any) => {
-          // row is likely an Arrow StructRow or Proxy
-          if (row && typeof row.toJSON === 'function') {
-            return row.toJSON();
-          }
-          return row;
-        });
-
-        exportData[table] = { schema, data };
-      }
-
-      // Convert to JSON string and then to blob
-      const jsonStr = JSON.stringify(exportData, null, 2);
-      return new Blob([jsonStr], { type: "application/json" });
-    } catch (err) {
-      console.error("Failed to export DuckDB", err);
-      throw err;
-    }
-  } finally {
-    try {
-      await conn?.close?.();
-    } catch {
-      // Ignore close errors
-    }
-  }
-}
-
-// IndexedDB persistence functions
-
-async function openIndexedDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(INDEXEDDB_NAME, INDEXEDDB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(INDEXEDDB_STORE)) {
-        db.createObjectStore(INDEXEDDB_STORE);
-      }
+    // Helper to find column in CSV (either exact or mapped)
+    const findCsvCol = (targetField: string): string | undefined => {
+      if (csvHeaders.includes(targetField)) return targetField;
+      // Search mapping
+      const mappedEntry = Object.entries(CSV_HEADER_MAPPING).find(([k, v]) => v === targetField);
+      if (mappedEntry && csvHeaders.includes(mappedEntry[0])) return mappedEntry[0];
+      return undefined;
     };
+
+    const scalarColsToInsert: { target: string, source: string }[] = [];
+    for (const field of SCALAR_FIELDS) {
+      const source = findCsvCol(field);
+      if (source) {
+        scalarColsToInsert.push({ target: field, source });
+      }
+    }
+
+    // 1. Insert Scalars
+    if (scalarColsToInsert.length > 0) {
+      if (!scalarColsToInsert.some(c => c.target === 'id')) {
+        throw new Error("CSV missing 'id' column");
+      }
+
+      const targetCols = scalarColsToInsert.map(c => `"${c.target}"`).join(",");
+      const sourceCols = scalarColsToInsert.map(c => `"${c.source}"`).join(",");
+
+      console.log(`Inserting columns: ${targetCols} from sources: ${sourceCols}`);
+
+      // We need to DELETE existing resources that match the new IDs to avoid unique constraints (if any) or stale data
+      // For now, let's just do INSERT OR REPLACE if possible? DuckDB supports generic INSERT OR REPLACE?
+      // Actually standard SQL is DELETE then INSERT or UPSERT.
+      // Let's use the delete-then-insert strategy for the batch? 
+      // Or just DELETE * WHERE id IN (SELECT id FROM temp)
+
+      const idSource = scalarColsToInsert.find(c => c.target === 'id')!.source;
+      await conn.query(`DELETE FROM resources WHERE id IN (SELECT "${idSource}" FROM ${tempTable})`);
+
+      // Also delete from MVs and Distributions if we are replacing the resource?
+      // Yes, if we are re-importing the resource, we should probably clear its old MVs.
+      // Distributions... maybe keep them if this is just a Metadata Update? 
+      // Risky. Usually "Full Import" implies replacement.
+      // But user specifically asked for "Distributions Import".
+      // If this is "Resources Import", we should probably clear associated MVs.
+      await conn.query(`DELETE FROM resources_mv WHERE id IN (SELECT "${idSource}" FROM ${tempTable})`);
+      // Warning: We do NOT delete distributions here, assuming Resources csv only updates metadata.
+
+      const preCount = await conn.query("SELECT count(*) as c FROM resources");
+      console.log(`Rows in resources before insert: ${preCount.toArray()[0].c}`);
+
+      // Explicit insert
+      await conn.query(`INSERT INTO resources (${targetCols}) SELECT ${sourceCols} FROM ${tempTable}`);
+
+      const postCount = await conn.query("SELECT count(*) as c FROM resources");
+      console.log(`Rows in resources after insert: ${postCount.toArray()[0].c}`);
+    } else {
+      console.warn("No scalar columns to insert!");
+    }
+
+    // 2. Insert MV
+    for (const field of REPEATABLE_STRING_FIELDS) {
+      const sourceCol = findCsvCol(field);
+      // Skip if source column doesn't exist in CSV
+      if (!sourceCol) continue;
+
+      // We need ID for MV delete/insert. Assuming ID is always present if we got past scalar check.
+      const idCol = findCsvCol('id');
+      if (!idCol) continue; // Should have been caught above
+
+      await conn.query(`
+            DELETE FROM resources_mv 
+            WHERE field = '${field}' 
+            AND id IN (SELECT "${idCol}" FROM ${tempTable})
+        `);
+
+      await conn.query(`
+            INSERT INTO resources_mv (id, field, val)
+            SELECT 
+                "${idCol}" as id, 
+                '${field}' as field, 
+                unnest(string_split("${sourceCol}", '|')) as val
+            FROM ${tempTable}
+            WHERE "${sourceCol}" IS NOT NULL AND "${sourceCol}" != ''
+        `);
+    }
+
+    // 3. Distributions
+    if (columns.includes("dct_references_s")) {
+      await conn.query(`
+            DELETE FROM distributions
+            WHERE resource_id IN (SELECT id FROM ${tempTable})
+        `);
+
+      const refs = await conn.query(`SELECT id, dct_references_s FROM ${tempTable} WHERE dct_references_s IS NOT NULL`);
+      for (const row of refs.toArray()) {
+        const id = row.id;
+        try {
+          const json = JSON.parse(row.dct_references_s);
+          // Insert each key-value
+          const stmt = await conn.prepare(`INSERT INTO distributions VALUES (?, ?, ?)`);
+          for (const [key, url] of Object.entries(json)) {
+            await stmt.query(id, key, String(url));
+          }
+          await stmt.close();
+        } catch (e) {
+          console.warn(`Failed to parse references for ${id}`, e);
+        }
+      }
+    }
+
+    const result = await conn.query(`SELECT count(*) as count FROM ${tempTable}`);
+    const rowCount = Number(result.toArray()[0].count);
+    console.log(`Imported ${rowCount} rows from ${file.name}`);
+
+    await conn.query(`DROP TABLE ${tempTable}`);
+    await saveDb();
+
+    return { success: true, message: `Imported ${columns.length} columns and ${rowCount} rows.`, count: rowCount };
+
+  } catch (err: any) {
+    console.error("Import failed", err);
+    return { success: false, message: err.message || "Import failed" };
+  }
+}
+
+export interface ValidationIssue {
+  row: number;
+  col: string;
+  reason: string;
+}
+
+export interface DistributionResult {
+  distributions: any[]; // Joined with resource title
+  total: number;
+}
+
+export async function queryDistributions(
+  page: number = 1,
+  pageSize: number = 20,
+  sortBy: string = "resource_id",
+  sortOrder: "asc" | "desc" = "asc",
+  keyword: string = ""
+): Promise<DistributionResult> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return { distributions: [], total: 0 };
+  const { conn } = ctx;
+
+  const offset = (page - 1) * pageSize;
+
+  let whereClause = "";
+  if (keyword) {
+    const k = keyword.replace(/'/g, "''").toLowerCase();
+    // search in resource_id, relation_key, url, and title (via join)
+    // Note: r.dct_title_s is joined below.
+    // BUT for countQuery we also need the join if we filter by title! 
+    // AND for filtering by resource fields we generally need the join.
+    // So we must propagate the JOIN to the count query if filtering, 
+    // OR just duplicate logic.
+
+    whereClause = `
+    WHERE lower(d.resource_id) LIKE '%${k}%' 
+       OR lower(d.relation_key) LIKE '%${k}%'
+       OR lower(d.url) LIKE '%${k}%'
+       OR lower(r.dct_title_s) LIKE '%${k}%'
+  `;
+  }
+
+  // Join with resources to get title
+  const dataQuery = `
+  SELECT 
+      d.resource_id, 
+      d.relation_key, 
+      d.url, 
+      r.dct_title_s
+  FROM distributions d
+  LEFT JOIN resources r ON d.resource_id = r.id
+  ${whereClause}
+  ORDER BY "${sortBy}" ${sortOrder}
+  LIMIT ${pageSize} OFFSET ${offset}
+`;
+
+  const countQuery = `
+  SELECT count(*) as c 
+  FROM distributions d 
+  LEFT JOIN resources r ON d.resource_id = r.id
+  ${whereClause}
+`;
+
+  const [dataRes, countRes] = await Promise.all([
+    conn.query(dataQuery),
+    conn.query(countQuery)
+  ]);
+
+  const distributions = dataRes.toArray().map((r: any) => ({
+    resource_id: r.resource_id,
+    relation_key: r.relation_key,
+    url: r.url,
+    dct_title_s: r.dct_title_s
+  }));
+
+  const total = Number(countRes.toArray()[0].c);
+
+  return { distributions, total };
+}
+
+export async function queryDistributionsForResource(resourceId: string): Promise<Distribution[]> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return [];
+
+  const safeId = resourceId.replace(/'/g, "''");
+  const res = await ctx.conn.query(`SELECT * FROM distributions WHERE resource_id = '${safeId}'`);
+
+  return res.toArray().map((r: any) => ({
+    resource_id: r.resource_id,
+    relation_key: r.relation_key,
+    url: r.url
+  }));
+}
+
+export async function upsertResource(resource: Resource, distributions: Distribution[] = []): Promise<void> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) throw new Error("DB not available");
+  const { conn } = ctx;
+
+  const id = resource.id;
+  if (!id) throw new Error("Resource ID is required");
+
+  // Delete existing
+  const safeId = id.replace(/'/g, "''");
+
+  await conn.query(`DELETE FROM resources WHERE id = '${safeId}'`);
+  await conn.query(`DELETE FROM resources_mv WHERE id = '${safeId}'`);
+  await conn.query(`DELETE FROM distributions WHERE resource_id = '${safeId}'`);
+
+  // Insert Scalars
+  const scalarCols: string[] = [];
+  const scalarVals: string[] = [];
+
+  for (const field of SCALAR_FIELDS) {
+    if (field === "dct_references_s") continue;
+
+    // @ts-ignore
+    let val = resource[field];
+
+    if (val === undefined || val === null) {
+      continue;
+    }
+
+    scalarCols.push(`"${field}"`);
+    const safeVal = String(val).replace(/'/g, "''");
+    scalarVals.push(`'${safeVal}'`);
+  }
+
+  if (scalarCols.length > 0) {
+    const query = `INSERT INTO resources (${scalarCols.join(",")}) VALUES (${scalarVals.join(",")})`;
+    await conn.query(query);
+  }
+
+  // Insert MVs
+  for (const field of REPEATABLE_STRING_FIELDS) {
+    // @ts-ignore
+    const values = resource[field] as string[];
+    if (values && Array.isArray(values)) {
+      for (const v of values) {
+        if (!v) continue;
+        const safeVal = v.replace(/'/g, "''");
+        await conn.query(`INSERT INTO resources_mv (id, field, val) VALUES ('${safeId}', '${field}', '${safeVal}')`);
+      }
+    }
+  }
+
+  // Insert Distributions
+  if (distributions.length > 0) {
+    for (const d of distributions) {
+      const k = d.relation_key.replace(/'/g, "''");
+      const u = d.url.replace(/'/g, "''");
+      // Ensure we use the resource ID from the main resource, just in case
+      await conn.query(`INSERT INTO distributions (resource_id, relation_key, url) VALUES ('${safeId}', '${k}', '${u}')`);
+    }
+  }
+
+  await saveDb();
+}
+
+
+// *** IndexedDB Helpers ***
+
+async function loadFromIndexedDB(): Promise<Uint8Array | null> {
+  return new Promise((resolve) => {
+    console.log(`[IndexedDB] Opening ${INDEXEDDB_NAME} to read...`);
+    const req = indexedDB.open(INDEXEDDB_NAME, 1);
+    req.onupgradeneeded = (e: any) => {
+      console.log("[IndexedDB] Creating object store...");
+      e.target.result.createObjectStore(INDEXEDDB_STORE);
+    }
+    req.onsuccess = (e: any) => {
+      const db = e.target.result;
+      const tx = db.transaction([INDEXEDDB_STORE], "readonly");
+      const get = tx.objectStore(INDEXEDDB_STORE).get(DB_FILENAME);
+      get.onsuccess = () => {
+        if (get.result && get.result.byteLength > 0) {
+          console.log(`[IndexedDB] Loaded ${get.result.byteLength} bytes.`);
+          resolve(get.result);
+        } else {
+          console.log(`[IndexedDB] No valid saved DB found (result: ${get.result ? get.result.byteLength + " bytes" : "null"}).`);
+          resolve(null);
+        }
+      };
+      get.onerror = () => {
+        console.error("[IndexedDB] Error reading store:", get.error);
+        resolve(null);
+      };
+    };
+    req.onerror = () => {
+      console.error("[IndexedDB] Error opening DB:", req.error);
+      resolve(null);
+    }
   });
 }
 
-export async function persistDuckDbToIndexedDB(db: duckdb.AsyncDuckDB): Promise<void> {
-  try {
-    // Export database state as JSON (using our export function)
-    const conn: any = await (db as any).connect();
-    try {
-      const tables = ["resources", "distributions"];
-      const exportData: any = {};
-
-      // Check which tables exist
-      const tablesResult = await conn.query("SHOW TABLES");
-      const existingTables = tablesResult.toArray().map((row: any) => row.name);
-
-      for (const table of tables) {
-        if (!existingTables.includes(table)) {
-          exportData[table] = { schema: [], data: [] };
-          continue;
-        }
-
-        const schemaResult = await conn.query(`DESCRIBE ${table}`);
-        const schema = schemaResult.toArray().map((row: any) => {
-          const r = row.toJSON ? row.toJSON() : row;
-          return {
-            column: r.column_name,
-            type: r.column_type,
-          };
-        });
-
-        const dataResult = await conn.query(`SELECT * FROM ${table}`);
-        const data = dataResult.toArray().map((row: any) => {
-          if (row && typeof row.toJSON === 'function') {
-            return row.toJSON();
-          }
-          return row;
-        });
-
-        exportData[table] = { schema, data };
-      }
-
-      const jsonStr = JSON.stringify(exportData);
-      const idb = await openIndexedDB();
-      const transaction = idb.transaction([INDEXEDDB_STORE], "readwrite");
-      const store = transaction.objectStore(INDEXEDDB_STORE);
-      await new Promise<void>((resolve, reject) => {
-        const request = store.put(jsonStr, "state");
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-      idb.close();
-      console.log("DuckDB state persisted to IndexedDB");
-    } finally {
-      await conn?.close?.();
+async function saveToIndexedDB(buffer: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log(`[IndexedDB] Saving ${buffer.byteLength} bytes...`);
+    const req = indexedDB.open(INDEXEDDB_NAME, 1);
+    req.onupgradeneeded = (e: any) => {
+      e.target.result.createObjectStore(INDEXEDDB_STORE);
     }
-  } catch (err) {
-    console.warn("Failed to persist DuckDB to IndexedDB", err);
-    // Don't throw - persistence failure shouldn't break the app
-  }
+    req.onsuccess = (e: any) => {
+      const db = e.target.result;
+      const tx = db.transaction([INDEXEDDB_STORE], "readwrite");
+      const put = tx.objectStore(INDEXEDDB_STORE).put(buffer, DB_FILENAME);
+      put.onsuccess = () => {
+        console.log("[IndexedDB] Save successful.");
+        resolve();
+      };
+      put.onerror = () => reject(put.error);
+    };
+    req.onerror = () => reject(req.error);
+  });
 }
 
-export async function restoreDuckDbFromIndexedDB(db: duckdb.AsyncDuckDB): Promise<boolean> {
-  try {
-    const idb = await openIndexedDB();
-    const transaction = idb.transaction([INDEXEDDB_STORE], "readonly");
-    const store = transaction.objectStore(INDEXEDDB_STORE);
+// *** Faceted Search DSL ***
 
-    const jsonStr = await new Promise<string | null>((resolve, reject) => {
-      const request = store.get("state");
-      request.onsuccess = () => resolve(request.result as string | null);
-      request.onerror = () => reject(request.error);
-    });
-    idb.close();
+export interface FacetedSearchRequest {
+  q?: string;
+  filters?: Record<string, any>; // { field: { any: [], all: [], gte: n, lte: n } }
+  sort?: { field: string; dir: "asc" | "desc" }[];
+  page?: { size: number; from: number };
+  facets?: { field: string; limit?: number }[];
+}
 
-    if (!jsonStr) {
-      return false; // No saved state
+export interface FacetedSearchResponse {
+  results: Resource[];
+  facets: Record<string, { value: string; count: number }[]>;
+  total: number;
+}
+
+export async function facetedSearch(req: FacetedSearchRequest): Promise<FacetedSearchResponse> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return { results: [], facets: {}, total: 0 };
+  const { conn } = ctx;
+
+  const limit = req.page?.size ?? 20;
+  const offset = req.page?.from ?? 0;
+  const sort = req.sort?.[0] ?? { field: "dct_title_s", dir: "asc" };
+
+  // Helper to compile WHERE clause
+  // omitField is for disjunctive faceting (exclude filter on the facet field itself)
+  const compileWhere = (omitField: string | null = null): { sql: string } => {
+    let clauses: string[] = ["1=1"];
+
+    // 1. Keyword Search
+    if (req.q && req.q.trim()) {
+      const k = req.q.replace(/'/g, "''");
+      clauses.push(`(
+        dct_title_s ILIKE '%${k}%' OR
+        dct_description_sm ILIKE '%${k}%' OR
+        id ILIKE '%${k}%' OR
+        EXISTS (SELECT 1 FROM resources_mv mv WHERE mv.id = resources.id AND mv.val ILIKE '%${k}%')
+      )`);
     }
 
-    const exportData = JSON.parse(jsonStr);
-    const conn: any = await (db as any).connect();
+    // 2. Filters
+    if (req.filters) {
+      for (const [field, condition] of Object.entries(req.filters)) {
+        if (field === omitField) continue;
 
-    try {
-      // Recreate tables and insert data
-      for (const [tableName, tableData] of Object.entries(exportData) as [string, any][]) {
-        if (!tableData.schema || !tableData.data) continue;
+        const isScalar = SCALAR_FIELDS.includes(field);
 
-        // Drop table if exists
-        await conn.query(`DROP TABLE IF EXISTS ${tableName}`);
-
-        if (tableData.schema.length === 0 || tableData.data.length === 0) {
-          continue; // Empty table
-        }
-
-        // Create table from schema
-        const columns = tableData.schema.map((col: any) => `"${col.column}" ${col.type}`).join(", ");
-        await conn.query(`CREATE TABLE ${tableName} (${columns})`);
-
-        // Insert data
-        if (tableData.data.length > 0) {
-          const firstRow = tableData.data[0];
-          const columnNames = Object.keys(firstRow);
-          const placeholders = columnNames.map(() => "?").join(", ");
-
-          const stmt = await conn.prepare(`INSERT INTO ${tableName} VALUES (${placeholders})`);
-          try {
-            for (const row of tableData.data) {
-              const values = columnNames.map((col) => row[col] ?? null);
-              await stmt.query(...values);
-            }
-          } finally {
-            await stmt.close();
+        // Handle "any" (OR)
+        if (condition.any && Array.isArray(condition.any) && condition.any.length > 0) {
+          const values = condition.any.map((v: string) => `'${String(v).replace(/'/g, "''")}'`).join(",");
+          if (isScalar) {
+            clauses.push(`"${field}" IN (${values})`);
+          } else {
+            // MV: EXISTS (SELECT 1 FROM resources_mv WHERE id=r.id AND field=F AND val IN (...))
+            clauses.push(`EXISTS (
+                    SELECT 1 FROM resources_mv m 
+                    WHERE m.id = resources.id 
+                    AND m.field = '${field}' 
+                    AND m.val IN (${values})
+                )`);
           }
         }
+
+        // Handle "all" (AND) - mainly for MV
+        if (condition.all && Array.isArray(condition.all) && condition.all.length > 0) {
+          const values = condition.all.map((v: string) => `'${String(v).replace(/'/g, "''")}'`).join(",");
+          const count = condition.all.length;
+          // MV: Has ALL these values. 
+          // Logic: count(distinct val) where val in (list) == list.length
+          clauses.push(`(
+                SELECT count(DISTINCT m.val) 
+                FROM resources_mv m
+                WHERE m.id = resources.id
+                AND m.field = '${field}'
+                AND m.val IN (${values})
+             ) = ${count}`);
+        }
+
+        // Handle Ranges (gte, lte) - assume Scalar for ranges usually (Year, Date)
+        if (condition.gte !== undefined) {
+          clauses.push(`CAST("${field}" AS INTEGER) >= ${Number(condition.gte)}`);
+        }
+        if (condition.lte !== undefined) {
+          clauses.push(`CAST("${field}" AS INTEGER) <= ${Number(condition.lte)}`);
+        }
+      }
+    }
+
+    return { sql: clauses.join(" AND ") };
+  };
+
+  // --- A. Results Query ---
+
+  const baseWhere = compileWhere(null).sql;
+  const safeSortCol = sort.field.replace(/[^a-zA-Z0-9_]/g, "");
+
+  const resultsQuery = `
+    SELECT * FROM resources
+    WHERE ${baseWhere}
+    ORDER BY "${safeSortCol}" ${sort.dir.toUpperCase()}
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+
+  const countQuery = `SELECT count(*) as c FROM resources WHERE ${baseWhere}`;
+
+  // Execute Results & Total
+  // We need to hydrate results similarly to queryResources (joining MVs etc)
+  // For simplicity MVP: just return scalars and we hydrate MVs if needed or assume UI mostly needs scalars + basic MV?
+  // User DSL implies we want full records.
+
+  // Actually, let's fetch IDs first then hydration? 
+  // No, let's try to get simple results first.
+
+  const [resData, resCount] = await Promise.all([
+    conn.query(resultsQuery),
+    conn.query(countQuery)
+  ]);
+
+  const total = Number(resCount.toArray()[0].c);
+
+  // Hydrate MVs for the result set
+  // This is a bit expensive per row but cleaner code-wise to reuse existing logic?
+  // Or just do a bulk fetch.
+  // Let's rely on basic hydration for now.
+  const scalarRows = resData.toArray();
+  const resources: Resource[] = [];
+
+  // Bulk fetch MVs for these IDs
+  if (scalarRows.length > 0) {
+    const ids = scalarRows.map((r: any) => `'${r.id}'`).join(",");
+    const mvRes = await conn.query(`SELECT * FROM resources_mv WHERE id IN (${ids})`);
+    const distRes = await conn.query(`SELECT * FROM distributions WHERE resource_id IN (${ids})`);
+
+    const mvMap = new Map<string, any[]>();
+    for (const r of mvRes.toArray()) {
+      if (!mvMap.has(r.id)) mvMap.set(r.id, []);
+      mvMap.get(r.id)?.push(r);
+    }
+
+    const distMap = new Map<string, any[]>();
+    for (const r of distRes.toArray()) {
+      if (!distMap.has(r.resource_id)) distMap.set(r.resource_id, []);
+      distMap.get(r.resource_id)?.push(r);
+    }
+
+    for (const row of scalarRows) {
+      const r: any = { ...row }; // scalars
+
+      // Attach MVs
+      const mvs = mvMap.get(r.id) || [];
+      for (const m of mvs) {
+        if (!r[m.field]) r[m.field] = [];
+        r[m.field].push(m.val);
       }
 
-      console.log("DuckDB state restored from IndexedDB");
-      return true;
-    } finally {
-      await conn?.close?.();
+      // Convert via mapping to ensure types
+      resources.push(resourceFromRow(r, distMap.get(r.id) || []));
     }
-  } catch (err) {
-    console.warn("Failed to restore DuckDB from IndexedDB", err);
-    return false;
   }
-}
 
-export async function clearDuckDbFromIndexedDB(): Promise<void> {
-  try {
-    const idb = await openIndexedDB();
-    const transaction = idb.transaction([INDEXEDDB_STORE], "readwrite");
-    const store = transaction.objectStore(INDEXEDDB_STORE);
-    await new Promise<void>((resolve, reject) => {
-      const request = store.delete("state");
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-    idb.close();
-    console.log("DuckDB state cleared from IndexedDB");
-  } catch (err) {
-    console.warn("Failed to clear DuckDB from IndexedDB", err);
+  // --- B. Facets Query ---
+
+  const facets: Record<string, { value: string; count: number }[]> = {};
+
+  if (req.facets) {
+    await Promise.all(req.facets.map(async (f) => {
+      const limit = f.limit ?? 10;
+
+      // Disjunctive: Omit filter for THIS field
+      const fWhere = compileWhere(f.field).sql;
+
+      let fSql = "";
+      if (SCALAR_FIELDS.includes(f.field)) {
+        // Scalar Aggregation
+        fSql = `
+                  SELECT "${f.field}" as val, count(*) as c 
+                  FROM resources 
+                  WHERE "${f.field}" IS NOT NULL AND "${f.field}" != ''
+                  AND ${fWhere}
+                  GROUP BY "${f.field}"
+                  ORDER BY c DESC, val ASC
+                  LIMIT ${limit}
+              `;
+      } else {
+        // MV Aggregation
+        // We need to join MVs to the filtered resource set
+        // "filtered resource set" is SELECT id FROM resources WHERE ...
+        fSql = `
+                  WITH filtered AS (SELECT id FROM resources WHERE ${fWhere})
+                  SELECT m.val, count(DISTINCT m.id) as c
+                  FROM resources_mv m
+                  JOIN filtered f ON f.id = m.id
+                  WHERE m.field = '${f.field}'
+                  GROUP BY m.val
+                  ORDER BY c DESC, m.val ASC
+                  LIMIT ${limit}
+              `;
+      }
+
+      try {
+        const fRes = await conn.query(fSql);
+        facets[f.field] = fRes.toArray().map((r: any) => ({
+          value: String(r.val),
+          count: Number(r.c)
+        }));
+      } catch (e) {
+        console.warn(`Facet query failed for ${f.field}`, e);
+        facets[f.field] = [];
+      }
+    }));
   }
-}
 
+  return { results: resources, facets, total };
+}
 

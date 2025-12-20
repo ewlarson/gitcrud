@@ -16,9 +16,10 @@ function pipeJoin(values: string[]): string {
   return cleaned.join("|");
 }
 
-function pipeSplit(value: string | undefined | null): string[] {
+function pipeSplit(value: string | undefined | null | any): string[] {
   if (!value) return [];
-  return value
+  if (Array.isArray(value)) return value.map(String);
+  return String(value)
     .split("|")
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
@@ -93,7 +94,7 @@ export function flattenResourceForDuckDb(resource: Resource): Record<string, any
 
 // resources.csv row (+ distributions) → Resource object with dct_references_s baked in.
 export function resourceFromRow(
-  row: Record<string, string>,
+  row: Record<string, any>,
   distributionsForResource: Distribution[]
 ): Resource {
   const data: AardvarkJson = {};
@@ -103,7 +104,7 @@ export function resourceFromRow(
     const value = row[field];
     if (value === undefined || value === "") continue;
     if (field === "gbl_suppressed_b" || field === "gbl_georeferenced_b") {
-      const v = value.toLowerCase();
+      const v = String(value).toLowerCase();
       data[field] = v === "1" || v === "true" || v === "yes" || v === "y";
     } else {
       data[field] = value;
