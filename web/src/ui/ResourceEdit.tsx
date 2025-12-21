@@ -55,12 +55,12 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
     const renderTextField = (label: string, field: keyof Resource, required = false) => (
         <div className="mb-3">
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-                {label} {required && <span className="text-red-400">*</span>}
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+                {label} {required && <span className="text-red-500 dark:text-red-400">*</span>}
             </label>
             <input
                 type="text"
-                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 px-3 py-1.5 text-sm text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                 value={String(resource[field] || "")}
                 onChange={(e) => handleChange(field, e.target.value)}
             />
@@ -69,9 +69,9 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
     const renderTextArea = (label: string, field: keyof Resource) => (
         <div className="mb-3">
-            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{label}</label>
             <textarea
-                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500 h-20"
+                className="w-full rounded bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 px-3 py-1.5 text-sm text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 focus:outline-none h-20"
                 value={String(resource[field] || "")}
                 onChange={(e) => handleChange(field, e.target.value)}
             />
@@ -80,7 +80,7 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
     const renderTagInput = (label: string, field: string) => (
         <div className="mb-3">
-            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{label}</label>
             <TagInput
                 value={(resource as any)[field] || []}
                 onChange={(vals) => handleArrayChange(field as keyof Resource, vals)}
@@ -91,9 +91,9 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
     const renderBoolSelect = (label: string, field: keyof Resource) => (
         <div className="mb-3">
-            <label className="block text-xs font-medium text-slate-300 mb-1">{label}</label>
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{label}</label>
             <select
-                className="w-full rounded bg-slate-950 border border-slate-700 px-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 px-3 py-1.5 text-sm text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                 value={resource[field] === true ? "true" : resource[field] === false ? "false" : ""}
                 onChange={(e) => {
                     const val = e.target.value;
@@ -109,13 +109,13 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
     return (
         <form onSubmit={handleSubmit} className="flex flex-col h-full">
-            <div className="flex items-center gap-4 border-b border-slate-800 pb-4 mb-4">
-                <h2 className="text-lg font-semibold text-white">Edit Resource</h2>
+            <div className="flex items-center gap-4 border-b border-gray-200 dark:border-slate-800 pb-4 mb-4">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Edit Resource</h2>
                 <div className="flex gap-2 ml-auto">
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="px-3 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-700 rounded hover:bg-slate-800"
+                        className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-gray-300 dark:border-slate-700 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
                     >
                         Cancel
                     </button>
@@ -130,21 +130,21 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
             </div>
 
             {saveError && (
-                <div className="mb-4 p-3 bg-red-900/40 border border-red-800 rounded text-red-200 text-xs">
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-800 rounded text-red-700 dark:text-red-200 text-xs">
                     Error saving: {saveError}
                 </div>
             )}
 
             {/* Tabs */}
-            <div className="flex gap-1 border-b border-slate-800 mb-4 overflow-x-auto">
+            <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 mb-4 overflow-x-auto">
                 {(["id", "core", "geo", "admin", "distributions", "extra"] as const).map((tab) => (
                     <button
                         key={tab}
                         type="button"
                         onClick={() => setActiveTab(tab)}
                         className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${activeTab === tab
-                                ? "border-indigo-500 text-indigo-400"
-                                : "border-transparent text-slate-500 hover:text-slate-300"
+                            ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
+                            : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                             }`}
                     >
                         {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -168,13 +168,13 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                         {renderTagInput("Alternative Title", "dct_alternative_sm")}
                         {renderTagInput("Description", "dct_description_sm")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Resource Class", "gbl_resourceClass_sm")}
                         {renderTagInput("Resource Type", "gbl_resourceType_sm")}
                         {renderTextField("Format", "dct_format_s")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Subject", "dct_subject_sm")}
                         {renderTagInput("Theme", "dcat_theme_sm")}
@@ -190,7 +190,7 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                         {renderTagInput("Date Range", "gbl_dateRange_drsim")}
                         {renderTagInput("Temporal Coverage", "dct_temporal_sm")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Spatial Coverage", "dct_spatial_sm")}
                         {renderTextArea("Geometry (WKT/Envelope)", "locn_geometry")}
@@ -207,18 +207,18 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                         {renderTagInput("Rights Holder", "dct_rightsHolder_sm")}
                         {renderTagInput("License", "dct_license_sm")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Creator", "dct_creator_sm")}
                         {renderTagInput("Publisher", "dct_publisher_sm")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Identifier", "dct_identifier_sm")}
                         {renderTextField("WxS Identifier", "gbl_wxsIdentifier_s")}
                         {renderTextField("File Size", "gbl_fileSize_s")}
 
-                        <hr className="border-slate-800 my-4" />
+                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
 
                         {renderTagInput("Relation", "dct_relation_sm")}
                         {renderTagInput("Member Of", "pcdm_memberOf_sm")}
@@ -233,33 +233,33 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                 {activeTab === "distributions" && (
                     <div className="space-y-4">
                         <div className="flex justify-between items-center mb-2">
-                            <p className="text-xs text-slate-400">Manage download links, WMS services, etc.</p>
-                            <button type="button" onClick={addDistribution} className="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-slate-600">
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Manage download links, WMS services, etc.</p>
+                            <button type="button" onClick={addDistribution} className="text-xs bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 px-2 py-1 rounded border border-gray-300 dark:border-slate-600 text-slate-700 dark:text-slate-200">
                                 + Add Item
                             </button>
                         </div>
 
                         {distributions.length === 0 ? (
-                            <div className="p-4 bg-slate-900 rounded border border-slate-800 text-center text-xs text-slate-500">
+                            <div className="p-4 bg-gray-50 dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-800 text-center text-xs text-slate-500">
                                 No distributions defined.
                             </div>
                         ) : (
                             <div className="space-y-2">
                                 {distributions.map((dist, idx) => (
-                                    <div key={idx} className="flex gap-2 items-start bg-slate-900/50 p-2 rounded border border-slate-800">
+                                    <div key={idx} className="flex gap-2 items-start bg-gray-50 dark:bg-slate-900/50 p-2 rounded border border-gray-200 dark:border-slate-800">
                                         <div className="flex-1">
-                                            <label className="block text-[10px] text-slate-500 mb-0.5">Type (Relation)</label>
+                                            <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">Type (Relation)</label>
                                             <input
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs"
+                                                className="w-full bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
                                                 placeholder="e.g. download, wms"
                                                 value={dist.relation_key}
                                                 onChange={(e) => updateDistribution(idx, "relation_key", e.target.value)}
                                             />
                                         </div>
                                         <div className="flex-[3]">
-                                            <label className="block text-[10px] text-slate-500 mb-0.5">URL</label>
+                                            <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">URL</label>
                                             <input
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs"
+                                                className="w-full bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
                                                 placeholder="https://..."
                                                 value={dist.url}
                                                 onChange={(e) => updateDistribution(idx, "url", e.target.value)}
@@ -268,7 +268,7 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                                         <button
                                             type="button"
                                             onClick={() => removeDistribution(idx)}
-                                            className="mt-4 text-slate-500 hover:text-red-400"
+                                            className="mt-4 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
                                         >
                                             ✕
                                         </button>
@@ -282,10 +282,10 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                 {activeTab === "extra" && (
                     <div className="space-y-4">
                         {renderTagInput("Display Note", "gbl_displayNote_sm")}
-                        <div className="p-4 bg-slate-900 rounded border border-slate-800 text-xs font-mono text-slate-400">
+                        <div className="p-4 bg-gray-50 dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400">
                             {JSON.stringify(resource.extra || {}, null, 2)}
                         </div>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
                             Extra fields are read-only in this editor version.
                         </p>
                     </div>
