@@ -1,8 +1,11 @@
+
 import React, { useEffect, useState, useCallback } from "react";
 import { Resource } from "../aardvark/model";
-import { facetedSearch, FacetedSearchRequest, exportFilteredResults } from "../duckdb/duckdbClient";
+import { FacetedSearchRequest, FacetedSearchResponse, facetedSearch, exportFilteredResults, getDistributionsForResource } from "../duckdb/duckdbClient";
 import { ProjectConfig } from "../github/client";
 import { useUrlState } from "../hooks/useUrlState";
+import { useThumbnailQueue } from "../hooks/useThumbnailQueue";
+
 
 interface DashboardProps {
     project: ProjectConfig | null;
@@ -24,6 +27,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     const [facetsData, setFacetsData] = useState<Record<string, { value: string; count: number }[]>>({});
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
+
+    const { thumbnails, register } = useThumbnailQueue();
+
+    // Register resources for thumbnail fetching
+    useEffect(() => {
+        resources.forEach(r => register(r.id, r));
+    }, [resources, register]);
+
     const [isExporting, setIsExporting] = useState(false);
 
     // URL State Definition
@@ -69,7 +80,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
 
                 for (const [key, val] of params.entries()) {
                     if (key.startsWith("f.")) {
-                        const field = key.substring(2);
+                        const field = key.substring(2).trim();
                         if (!facets[field]) facets[field] = [];
                         facets[field].push(val);
                     }
@@ -211,38 +222,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     const totalPages = Math.ceil(total / pageSize);
 
     return (
-        <div className="flex bg-slate-900 h-full">
+        <div className="flex bg-gray-50 dark:bg-slate-900 h-full transition-colors duration-200">
             {/* Sidebar: Facets */}
-            <div className="w-64 flex-shrink-0 border-r border-slate-800 p-4 overflow-y-auto">
-                <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider">Refine Results</h3>
+            <div className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-slate-800 p-4 overflow-y-auto bg-white dark:bg-transparent">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-4 uppercase tracking-wider">Refine Results</h3>
 
                 <div className="space-y-6">
                     {FACETS.map(f => {
                         const data = facetsData[f.field] || [];
-                        // If we have selected items that are NOT in the list (due to disjunctive or limits), force show them?
-                        // Actually disjunctive facets usually show all selected items plus top counts.
-                        // For now just show returned data + checked items if missing (DSL handles disjunctive counts correctly).
-
                         // Check if we have data or if it is selected
                         if (data.length === 0 && (!selectedFacets[f.field] || selectedFacets[f.field].length === 0)) return null;
 
                         return (
                             <div key={f.field}>
-                                <h4 className="text-sm font-medium text-slate-300 mb-2">{f.label}</h4>
+                                <h4 className="text-sm font-medium text-slate-900 dark:text-slate-300 mb-2">{f.label}</h4>
                                 <ul className="space-y-1">
                                     {data.map(item => {
                                         const isChecked = selectedFacets[f.field]?.includes(item.value);
                                         return (
                                             <li key={item.value}>
-                                                <label className="flex items-center text-sm text-slate-400 hover:text-slate-200 cursor-pointer">
+                                                <label className="flex items-center text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 cursor-pointer">
                                                     <input
                                                         type="checkbox"
-                                                        className="mr-2 rounded border-slate-700 bg-slate-800 text-indigo-600 focus:ring-0 focus:ring-offset-0"
+                                                        className="mr-2 rounded border-gray-300 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-indigo-600 focus:ring-0 focus:ring-offset-0"
                                                         checked={isChecked}
                                                         onChange={() => toggleFacet(f.field, item.value)}
                                                     />
                                                     <span className="flex-1 truncate" title={item.value}>{item.value || "<Empty>"}</span>
-                                                    <span className="ml-2 text-xs text-slate-600 font-mono">{item.count}</span>
+                                                    <span className="ml-2 text-xs text-slate-400 dark:text-slate-600 font-mono">{item.count}</span>
                                                 </label>
                                             </li>
                                         );
@@ -257,41 +264,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             {/* Main: Results */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Top Bar */}
-                <div className="border-b border-slate-800 bg-slate-900/50 p-4 flex items-center justify-between">
+                <div className="border-b border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 p-4 flex items-center justify-between backdrop-blur-sm">
                     <div className="flex-1 max-w-2xl relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             {/* Icon */}
-                            <svg className="h-5 w-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="h-5 w-5 text-slate-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                             </svg>
                         </div>
                         <input
                             type="text"
-                            className="block w-full rounded-md border border-slate-700 bg-slate-950 pl-10 pr-3 py-2 text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 sm:text-sm"
+                            className="block w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 pl-10 pr-3 py-2 text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 sm:text-sm"
                             placeholder="Search by keyword..."
                             value={inputValue}
                             onChange={e => setInputValue(e.target.value)}
                         />
                     </div>
                     <div className="ml-4 flex items-center gap-4">
-                        <span className="text-sm text-slate-400">
-                            Found <span className="text-white font-medium">{total}</span> results
+                        <span className="text-sm text-slate-500 dark:text-slate-400">
+                            Found <span className="text-slate-900 dark:text-white font-medium">{total}</span> results
                         </span>
 
-                        <div className="flex items-center bg-slate-800 rounded-md p-0.5 border border-slate-700">
+                        <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-md p-0.5 border border-gray-200 dark:border-slate-700">
                             <button
                                 onClick={() => handleExport('json')}
                                 disabled={isExporting || total === 0}
-                                className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow"
                                 title="Download as Zip of JSON files"
                             >
                                 JSON
                             </button>
-                            <div className="w-px bg-slate-700 h-4 mx-0.5"></div>
+                            <div className="w-px bg-gray-300 dark:bg-slate-700 h-4 mx-0.5"></div>
                             <button
                                 onClick={() => handleExport('csv')}
                                 disabled={isExporting || total === 0}
-                                className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow"
                                 title="Download as CSV"
                             >
                                 CSV
@@ -300,7 +307,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
 
                         <button
                             onClick={onCreate}
-                            className="ml-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                            className="ml-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 shadow-sm"
                         >
                             Create New
                         </button>
@@ -316,34 +323,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     ) : (
                         <div className="space-y-4">
                             {resources.map(r => (
-                                <div key={r.id} className="group relative flex flex-col sm:flex-row gap-4 rounded-lg border border-slate-800 bg-slate-900/40 p-4 hover:border-slate-700 hover:bg-slate-900/60 transition-colors">
+                                <div key={r.id} className="group relative flex flex-col sm:flex-row gap-4 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-900/60 transition-colors shadow-sm hover:shadow-md">
+                                    {/* Thumbnail */}
+                                    <div className="flex-shrink-0 w-24 h-24 bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 flex items-center justify-center overflow-hidden self-start">
+                                        {thumbnails[r.id] ? (
+                                            <img src={thumbnails[r.id]!} alt="" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} referrerPolicy="no-referrer" />
+                                        ) : (
+                                            <span className="text-3xl opacity-20 grayscale select-none">
+                                                {r.gbl_resourceClass_sm?.includes("Maps") ? "🗺️" : "📄"}
+                                            </span>
+                                        )}
+                                    </div>
+
                                     <div className="flex-1 min-w-0">
-                                        <h3 className="text-lg font-medium text-indigo-400 group-hover:text-indigo-300">
+                                        <h3 className="text-lg font-medium text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">
                                             <button onClick={() => onEdit(r.id)} className="text-left focus:outline-none">
                                                 {r.dct_title_s || "Untitled"}
                                             </button>
                                         </h3>
-                                        <p className="mt-1 text-sm text-slate-400 line-clamp-2">
+                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
                                             {r.dct_description_sm?.[0] || "No description."}
                                         </p>
                                         <div className="mt-2 flex flex-wrap gap-2">
                                             {r.gbl_resourceClass_sm?.slice(0, 3).map(c => (
-                                                <span key={c} className="inline-flex items-center rounded-sm bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300 border border-slate-700">
+                                                <span key={c} className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
                                                     {c}
                                                 </span>
                                             ))}
                                             {r.schema_provider_s && (
-                                                <span className="inline-flex items-center rounded-sm bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300 border border-slate-700">
+                                                <span className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
                                                     {r.schema_provider_s}
                                                 </span>
                                             )}
                                         </div>
                                     </div>
                                     <div className="flex-shrink-0 flex flex-col items-end justify-between gap-2">
-                                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public" ? "bg-emerald-900/30 text-emerald-400" : "bg-amber-900/30 text-amber-400"}`}>
+                                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public" ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"} `}>
                                             {r.dct_accessRights_s}
                                         </span>
-                                        <div className="text-xs text-slate-500 font-mono">{r.id}</div>
+                                        <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">{r.id}</div>
                                     </div>
                                 </div>
                             ))}
@@ -353,19 +371,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                    <div className="border-t border-slate-800 bg-slate-900 p-4 flex items-center justify-between">
+                    <div className="border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 p-4 flex items-center justify-between">
                         <button
                             disabled={page <= 1}
                             onClick={() => setState(prev => ({ ...prev, page: prev.page - 1 }))}
-                            className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 disabled:opacity-50 hover:bg-slate-700"
+                            className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-slate-700 shadow-sm"
                         >
                             Previous
                         </button>
-                        <span className="text-sm text-slate-400">Page {page} of {totalPages}</span>
+                        <span className="text-sm text-slate-500 dark:text-slate-400">Page {page} of {totalPages}</span>
                         <button
                             disabled={page >= totalPages}
                             onClick={() => setState(prev => ({ ...prev, page: prev.page + 1 }))}
-                            className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 disabled:opacity-50 hover:bg-slate-700"
+                            className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-slate-700 shadow-sm"
                         >
                             Next
                         </button>

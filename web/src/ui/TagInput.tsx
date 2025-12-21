@@ -53,18 +53,18 @@ export const TagInput: React.FC<TagInputProps> = ({
             placeholder={placeholder || "Select or type to create..."}
             classNames={{
                 control: (state) =>
-                    `!bg-slate-950 !border-slate-700 !rounded-md !min-h-[38px] ${state.isFocused ? "!border-indigo-500 !ring-1 !ring-indigo-500" : ""
+                    `!bg-white dark:!bg-slate-950 !border-gray-300 dark:!border-slate-700 !rounded-md !min-h-[38px] ${state.isFocused ? "!border-indigo-500 !ring-1 !ring-indigo-500" : ""
                     }`,
-                menu: () => "!bg-slate-900 !border !border-slate-700 !rounded-md !mt-1",
+                menu: () => "!bg-white dark:!bg-slate-900 !border !border-gray-200 dark:!border-slate-700 !rounded-md !mt-1 !shadow-lg",
                 option: (state) =>
-                    `!cursor-pointer ${state.isFocused ? "!bg-slate-800" : "!bg-slate-900"
-                    } !text-slate-200`,
-                multiValue: () => "!bg-indigo-900/50 !rounded",
-                multiValueLabel: () => "!text-indigo-200 !text-xs",
+                    `!cursor-pointer ${state.isFocused ? "!bg-gray-100 dark:!bg-slate-800" : "!bg-white dark:!bg-slate-900"
+                    } !text-slate-900 dark:!text-slate-200`,
+                multiValue: () => "!bg-indigo-50 dark:!bg-indigo-900/50 !rounded",
+                multiValueLabel: () => "!text-indigo-700 dark:!text-indigo-200 !text-xs",
                 multiValueRemove: () =>
-                    "!text-indigo-300 hover:!bg-indigo-800 hover:!text-white !rounded-r",
-                input: () => "!text-slate-100 !text-xs",
-                placeholder: () => "!text-slate-500 !text-xs",
+                    "!text-indigo-500 dark:!text-indigo-300 hover:!bg-indigo-100 dark:hover:!bg-indigo-800 hover:!text-indigo-700 dark:hover:!text-white !rounded-r",
+                input: () => "!text-slate-900 dark:!text-slate-100 !text-xs",
+                placeholder: () => "!text-slate-400 dark:!text-slate-500 !text-xs",
             }}
             styles={{
                 control: (base) => ({

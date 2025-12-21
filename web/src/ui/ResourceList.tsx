@@ -78,12 +78,12 @@ export const ResourceList: React.FC<ResourceListProps> = ({
     const totalPages = Math.ceil(total / pageSize);
 
     return (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
             {/* Header / Toolbar */}
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 p-4">
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 p-4 backdrop-blur-sm">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-lg font-semibold text-slate-100">Resources</h2>
-                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Resources</h2>
+                    <span className="rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-600 dark:text-slate-400">
                         {total} total
                     </span>
                 </div>
@@ -93,12 +93,12 @@ export const ResourceList: React.FC<ResourceListProps> = ({
                         placeholder="Search resources..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        className="w-64 rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                        className="w-64 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                     />
                     <button
                         onClick={onCreate}
                         disabled={!project}
-                        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         Create New
                     </button>
@@ -107,9 +107,9 @@ export const ResourceList: React.FC<ResourceListProps> = ({
 
             {/* Table */}
             <div className="flex-1 overflow-auto p-4">
-                <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900 shadow">
-                    <table className="min-w-full divide-y divide-slate-800">
-                        <thead className="bg-slate-950">
+                <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                    <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-800">
+                        <thead className="bg-gray-50 dark:bg-slate-950">
                             <tr>
                                 <SortHeader
                                     label="ID"
@@ -139,12 +139,12 @@ export const ResourceList: React.FC<ResourceListProps> = ({
                                     sortOrder={sortOrder}
                                     onClick={handleSort}
                                 />
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
+                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                                     Actions
                                 </th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-800 bg-slate-900/50">
+                        <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/50">
                             {loading ? (
                                 <tr>
                                     <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -159,24 +159,24 @@ export const ResourceList: React.FC<ResourceListProps> = ({
                                 </tr>
                             ) : (
                                 resources.map((r) => (
-                                    <tr key={r.id} className="hover:bg-slate-800/50">
-                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-sm text-slate-300">
+                                    <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-sm text-slate-600 dark:text-slate-300">
                                             {r.id}
                                         </td>
-                                        <td className="px-4 py-3 text-sm text-slate-100 font-medium">
-                                            {r.dct_title_s || <span className="text-slate-600 italic">Untitled</span>}
+                                        <td className="px-4 py-3 text-sm text-slate-900 dark:text-slate-100 font-medium">
+                                            {r.dct_title_s || <span className="text-slate-400 italic">Untitled</span>}
                                         </td>
-                                        <td className="px-4 py-3 text-sm text-slate-300">
+                                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
                                             {r.gbl_resourceClass_sm.map(c => (
-                                                <span key={c} className="mr-1 inline-flex items-center rounded bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300">
+                                                <span key={c} className="mr-1 inline-flex items-center rounded bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
                                                     {c}
                                                 </span>
                                             ))}
                                         </td>
-                                        <td className="px-4 py-3 text-sm text-slate-300">
+                                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
                                             <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public"
-                                                ? "bg-emerald-900/30 text-emerald-400"
-                                                : "bg-amber-900/30 text-amber-400"
+                                                ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                                                : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
                                                 }`}>
                                                 {r.dct_accessRights_s}
                                             </span>
@@ -184,7 +184,7 @@ export const ResourceList: React.FC<ResourceListProps> = ({
                                         <td className="whitespace-nowrap px-4 py-3 text-sm">
                                             <button
                                                 onClick={() => onEdit(r.id)}
-                                                className="font-medium text-indigo-400 hover:text-indigo-300 hover:underline"
+                                                className="font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline"
                                             >
                                                 Edit
                                             </button>
@@ -198,24 +198,24 @@ export const ResourceList: React.FC<ResourceListProps> = ({
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between border-t border-slate-800 bg-slate-900/50 px-4 py-3">
-                <div className="text-sm text-slate-400">
-                    Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to{" "}
-                    <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{" "}
-                    <span className="font-medium">{total}</span> results
+            <div className="flex items-center justify-between border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 px-4 py-3">
+                <div className="text-sm text-slate-500 dark:text-slate-400">
+                    Showing <span className="font-medium text-slate-900 dark:text-white">{(page - 1) * pageSize + 1}</span> to{" "}
+                    <span className="font-medium text-slate-900 dark:text-white">{Math.min(page * pageSize, total)}</span> of{" "}
+                    <span className="font-medium text-slate-900 dark:text-white">{total}</span> results
                 </div>
                 <div className="flex gap-2">
                     <button
                         onClick={() => setPage(Math.max(1, page - 1))}
                         disabled={page === 1}
-                        className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+                        className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 shadow-sm"
                     >
                         Previous
                     </button>
                     <button
                         onClick={() => setPage(Math.min(totalPages, page + 1))}
                         disabled={page >= totalPages}
-                        className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+                        className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 shadow-sm"
                     >
                         Next
                     </button>
@@ -234,13 +234,13 @@ const SortHeader: React.FC<{
 }> = ({ label, column, currentSort, sortOrder, onClick }) => {
     return (
         <th
-            className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-300 hover:bg-slate-800 hover:text-white"
+            className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors"
             onClick={() => onClick(column)}
         >
             <div className="flex items-center gap-1">
                 {label}
                 {currentSort === column && (
-                    <span className="text-indigo-400">
+                    <span className="text-indigo-600 dark:text-indigo-400">
                         {sortOrder === "asc" ? "▲" : "▼"}
                     </span>
                 )}

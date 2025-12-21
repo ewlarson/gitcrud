@@ -1125,3 +1125,22 @@ export async function facetedSearch(req: FacetedSearchRequest): Promise<FacetedS
   return { results: resources, facets, total };
 }
 
+export async function getDistributionsForResource(resourceId: string): Promise<Distribution[]> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return [];
+
+  // Basic sanitization
+  const safeId = resourceId.replace(/'/g, "''");
+  try {
+    const res = await ctx.conn.query(`SELECT * FROM distributions WHERE resource_id = '${safeId}'`);
+    return res.toArray().map((r: any) => ({
+      resource_id: String(r.resource_id),
+      relation_key: String(r.relation_key),
+      url: String(r.url)
+    }));
+  } catch (e) {
+    console.warn(`Failed to fetch distributions for ${resourceId}`, e);
+    return [];
+  }
+}
+

@@ -59,19 +59,20 @@ export class GithubClient {
     return (await res.json()) as T;
   }
 
-  async fetchRecursiveTree(repoRef: GithubRepoRef): Promise<{ path: string; sha: string; type: string }[]> {
-    const { owner, repo, branch } = repoRef;
 
-    // 1. Get branch SHA
-    const branchData = await this.request<{ commit: { sha: string } }>(
-      `/repos/${owner}/${repo}/branches/${branch}`
-    );
-    const treeSha = branchData.commit.sha;
 
-    // 2. Get Tree Recursive
-    const treeData = await this.request<{ tree: { path: string; mode: string; type: string; sha: string }[], truncated: boolean }>(
-      `/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`
-    );
+  async fetchTree(sha: string, recursive: boolean = false): Promise<{ path: string; sha: string; type: string }[]> {
+    // This method needs repo context to work, but the current class structure assumes methods work on any repo
+    // if passed in via GithubRepoRef. The previous `fetchRecursiveTree` took `repoRef`.
+    // The previous edit introduced a broken placeholder. 
+    // We will rely on `fetchTreeData` which takes `repoRef`.
+    throw new Error("Use fetchTreeData with repoRef instead.");
+  }
+
+  private async fetchTreeData(repoRef: GithubRepoRef, sha: string, recursive: boolean): Promise<{ path: string; sha: string; type: string }[]> {
+    const { owner, repo } = repoRef;
+    const url = `/repos/${owner}/${repo}/git/trees/${sha}${recursive ? '?recursive=1' : ''}`;
+    const treeData = await this.request<{ tree: { path: string; mode: string; type: string; sha: string }[], truncated: boolean }>(url);
 
     if (treeData.truncated) {
       console.warn("GitHub tree response truncated. Some files may be missing.");
@@ -82,6 +83,39 @@ export class GithubClient {
       sha: i.sha,
       type: i.type === "blob" ? "blob" : "tree"
     }));
+  }
+
+  async fetchRecursiveTree(repoRef: GithubRepoRef): Promise<{ path: string; sha: string; type: string }[]> {
+    const { owner, repo, branch } = repoRef;
+    const branchData = await this.request<{ commit: { sha: string } }>(
+      `/repos/${owner}/${repo}/branches/${branch}`
+    );
+    return this.fetchTreeData(repoRef, branchData.commit.sha, true);
+  }
+
+  // Fetch only the tree for a specific folder path (e.g. metadata-aardvark)
+  async fetchSubtree(repoRef: GithubRepoRef, targetPath: string): Promise<{ path: string; sha: string; type: string }[]> {
+    try {
+      // 1. Get Root Tree (Non-recursive)
+      const { owner, repo, branch } = repoRef;
+      const branchData = await this.request<{ commit: { sha: string } }>(
+        `/repos/${owner}/${repo}/branches/${branch}`
+      );
+      const rootTree = await this.fetchTreeData(repoRef, branchData.commit.sha, false);
+
+      // 2. Find the target folder
+      const target = rootTree.find(i => i.path === targetPath && i.type === "tree");
+      if (!target) {
+        return [];
+      }
+
+      // 3. Fetch that tree recursively
+      return await this.fetchTreeData(repoRef, target.sha, true);
+
+    } catch (e) {
+      console.error("Subtree fetch failed", e);
+      throw e;
+    }
   }
 
   async fetchBlob(repoRef: GithubRepoRef, sha: string): Promise<any> {

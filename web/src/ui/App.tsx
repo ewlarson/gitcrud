@@ -10,6 +10,7 @@ import { ResourceEdit } from "./ResourceEdit";
 import { DistributionsList } from "./DistributionsList";
 import { Dashboard } from "./Dashboard";
 import { useUrlState } from "../hooks/useUrlState";
+import { ThemeToggle } from "./ThemeToggle";
 
 
 export const App: React.FC = () => {
@@ -214,62 +215,72 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      <header className="border-b border-slate-800 bg-slate-900/80 px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
+      <header className="border-b border-gray-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between backdrop-blur-sm">
         <div className="flex items-center gap-2">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-white font-bold text-lg">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 dark:bg-indigo-500 text-white font-bold text-lg shadow-sm">
             A
           </span>
           <div>
-            <h1 className="text-lg font-semibold">Aardvark Metadata Studio</h1>
-            <p className="text-xs text-slate-400">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Aardvark Metadata Studio</h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Local DuckDB Edition
             </p>
           </div>
         </div>
         <div className="text-right flex flex-col items-end gap-1">
-          <p className="text-[11px] text-slate-400">{status}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{status}</p>
           <div className="flex gap-2 mt-1">
+            <ThemeToggle />
+            <div className="w-[1px] h-6 bg-gray-300 dark:bg-slate-800 mx-1"></div>
             <button
               type="button"
               onClick={() => setUrlState({ view: "dashboard" })}
-              className={`rounded-md border px-2 py-1 text-[10px] ${view === "dashboard" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
+              className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${view === "dashboard"
+                ? "bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-900 dark:text-white font-medium"
+                : "border-transparent text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/70"}`}
             >
               Dashboard
             </button>
             <button
               type="button"
               onClick={() => setUrlState({ view: "admin" })}
-              className={`rounded-md border px-2 py-1 text-[10px] ${view === "admin" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
+              className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${view === "admin"
+                ? "bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-900 dark:text-white font-medium"
+                : "border-transparent text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/70"}`}
             >
               Admin List
             </button>
             <button
               type="button"
               onClick={() => setUrlState({ view: "distributions" })}
-              className={`rounded-md border px-2 py-1 text-[10px] ${view === "distributions" ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
+              className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${view === "distributions"
+                ? "bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-900 dark:text-white font-medium"
+                : "border-transparent text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/70"}`}
             >
               Distributions
             </button>
-            <div className="w-[1px] h-6 bg-slate-800 mx-1"></div>
+            <div className="w-[1px] h-6 bg-gray-300 dark:bg-slate-800 mx-1"></div>
             <button
               type="button"
               onClick={() => setUrlState({ view: "import" })}
-              className={`rounded-md border px-2 py-1 text-[10px] ${view === "import" ? "bg-indigo-600 border-indigo-500 text-white" : "border-slate-700 text-slate-200 hover:bg-slate-800/70"}`}
+              className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${view === "import"
+                ? "bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-500/50 text-indigo-700 dark:text-indigo-300"
+                : "border-transparent text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/70"}`}
             >
               Import / Export
             </button>
             <button
               type="button"
               onClick={handleExportJsonZip}
-              className="rounded-md border border-slate-700 px-2 py-1 text-[10px] text-emerald-400 border-emerald-900 hover:bg-emerald-900/20"
+              className="rounded-md border border-emerald-200 dark:border-emerald-900/50 px-2 py-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 hover:bg-emerald-100 dark:hover:bg-emerald-900/20"
             >
               {isExportingJson ? "Zipping..." : "Export OGM JSONs"}
             </button>
             <button
               type="button"
               onClick={handleExportDuckDb}
-              className="rounded-md border border-slate-700 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-800/70"
+              className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/70"
             >
               Download DB
             </button>
@@ -280,7 +291,7 @@ export const App: React.FC = () => {
       <main className="flex-1 p-6 w-full mx-auto flex flex-col min-h-0">
         <div className="flex-1 flex flex-col min-h-0 space-y-6">
 
-          <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <section className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0 overflow-hidden shadow-sm dark:shadow-none backdrop-blur-sm">
             {view === "dashboard" && (
               <div className="flex flex-col h-full -m-6">
                 <Dashboard
@@ -328,7 +339,7 @@ export const App: React.FC = () => {
                   onClick={() => {
                     setUrlState({ view: "dashboard" });
                   }}
-                  className="mb-4 self-start flex items-center gap-2 text-xs text-slate-400 hover:text-white"
+                  className="mb-4 self-start flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
                 >
                   ← Back to Dashboard
                 </button>

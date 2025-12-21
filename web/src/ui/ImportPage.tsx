@@ -68,28 +68,28 @@ export const ImportPage: React.FC = () => {
 
     return (
         <div className="p-8 max-w-4xl mx-auto space-y-8">
-            <h1 className="text-2xl font-bold text-slate-100">Import Data</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Import Data</h1>
 
             {/* Tabs */}
-            <div className="flex border-b border-slate-800 space-x-6">
+            <div className="flex border-b border-gray-200 dark:border-slate-800 space-x-6">
                 <button
                     onClick={() => setMode("local")}
-                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "local" ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "local" ? "border-indigo-500 text-indigo-600 dark:text-white" : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"}`}
                 >
                     Local File Upload
                 </button>
                 <button
                     onClick={() => setMode("github")}
-                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "github" ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${mode === "github" ? "border-indigo-500 text-indigo-600 dark:text-white" : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"}`}
                 >
                     GitHub Import
                 </button>
             </div>
 
             {mode === "local" && (
-                <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
-                    <h2 className="text-lg font-semibold mb-4 text-slate-200">1. CSV / JSON Import</h2>
-                    <p className="text-slate-400 mb-4 text-sm">
+                <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-6 shadow-sm">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-900 dark:text-slate-200">1. CSV / JSON Import</h2>
+                    <p className="text-slate-500 dark:text-slate-400 mb-4 text-sm">
                         Upload Aardvark-compliant CSV files or OGM Aardvark JSON files.
                         Existing records with matching IDs will be updated.
                     </p>
@@ -99,7 +99,7 @@ export const ImportPage: React.FC = () => {
                         multiple
                         onChange={handleFileChange}
                         disabled={loading}
-                        className="block w-full text-sm text-slate-400
+                        className="block w-full text-sm text-slate-500 dark:text-slate-400
                             file:mr-4 file:py-2 file:px-4
                             file:rounded-full file:border-0
                             file:text-sm file:font-semibold
@@ -108,7 +108,7 @@ export const ImportPage: React.FC = () => {
                         "
                     />
                     {status && (
-                        <div className={`mt-6 p-4 rounded-md ${status.startsWith("Error") ? "bg-red-900/50 text-red-200 border-red-800" : "bg-slate-800 text-slate-200 border-slate-700"} border`}>
+                        <div className={`mt-6 p-4 rounded-md ${status.startsWith("Error") ? "bg-red-50 dark:bg-red-900/50 text-red-700 dark:text-red-200 border-red-200 dark:border-red-800" : "bg-gray-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-gray-200 dark:border-slate-700"} border`}>
                             {status}
                         </div>
                     )}
@@ -116,25 +116,25 @@ export const ImportPage: React.FC = () => {
             )}
 
             {mode === "github" && (
-                <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
-                    <h2 className="text-lg font-semibold mb-4 text-slate-200">GitHub Repository Import</h2>
-                    <p className="text-slate-400 mb-6 text-sm">
+                <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-6 shadow-sm">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-900 dark:text-slate-200">GitHub Repository Import</h2>
+                    <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">
                         Scan a GitHub repository for `metadata-aardvark` folders and bulk import JSON records.
                     </p>
                     <GithubImport />
                 </div>
             )}
 
-            <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
-                <h2 className="text-lg font-semibold mb-4 text-slate-200">2. Save Database</h2>
-                <p className="text-slate-400 mb-4 text-sm">
+            <div className="bg-white dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-800 p-6 shadow-sm">
+                <h2 className="text-lg font-semibold mb-4 text-slate-900 dark:text-slate-200">2. Save Database</h2>
+                <p className="text-slate-500 dark:text-slate-400 mb-4 text-sm">
                     Download the updated <code>records.duckdb</code> file.
                     <strong> You must commit this file to the <code>web/public/</code> directory in the repository</strong> to make changes permanent for all users.
                 </p>
                 <button
                     onClick={handleSaveDb}
                     disabled={loading}
-                    className="bg-emerald-600 text-white px-6 py-2 rounded-md hover:bg-emerald-500 disabled:opacity-50 font-medium"
+                    className="bg-emerald-600 text-white px-6 py-2 rounded-md hover:bg-emerald-500 disabled:opacity-50 font-medium shadow-sm"
                 >
                     Download Database
                 </button>
