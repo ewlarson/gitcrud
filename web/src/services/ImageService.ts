@@ -1,5 +1,6 @@
 import { Resource, Distribution, REFERENCE_URI_MAPPING } from "../aardvark/model";
 
+
 /**
  * Service for handling image asset extraction from Aardvark records.
  * Ported from: https://github.com/geobtaa/geospatial-api/blob/develop/app/services/image_service.py
@@ -18,49 +19,46 @@ export class ImageService {
      * This may require fetching a IIIF manifest, so it returns a Promise.
      */
     async getThumbnailUrl(): Promise<string | null> {
+        // 0. Check Cache (already populated in Resource)
+        if (this.resource.thumbnail) {
+            // console.debug(`[ImageService] Cache Hit for ${this.resource.id}`);
+            return this.resource.thumbnail;
+        }
+
         // Check for restricted access rights - actually we might show thumbnails for restricted items if public?
         // Python code skips restricted:
         if (this.resource.dct_accessRights_s?.toLowerCase() === "restricted") {
-            // console.log("Skipping thumbnail for restricted item", this.resource.id);
-            // return null;
-            // UPDATE: In many portals, we show thumbnails even for restricted items if possible.
-            // But let's follow the Python logic for now or allow it.
-            // If the thumbnail is public (e.g. from a public IIIF Manifest), it should be fine.
-            // BTAA logic explicitly returns None. I'll respect that for safety, or maybe make it optional.
             console.debug(`[ImageService] Access Restricted for ${this.resource.id}`);
             return null;
         }
 
         const sourceUrl = this.getThumbnailSourceUrl();
-        if (!sourceUrl) {
-            // console.debug(`[ImageService] No thumbnail source for ${this.resource.id}`);
-            return null;
-        }
+        if (!sourceUrl) return null;
 
         // Check if it is a IIIF Manifest URL
         if (this.isManifestUrl(sourceUrl)) {
             // Need to fetch manifest
             try {
-                // console.debug(`[ImageService] Fetching manifest for ${this.resource.id}: ${sourceUrl}`);
                 const manifest = await this.fetchManifest(sourceUrl);
                 if (manifest) {
                     const thumb = this.extractThumbnailFromManifest(manifest);
                     if (thumb) {
                         const final = this.standardizeIiifUrl(thumb);
                         console.log(`[ImageService] ✅ Resolved Thumbnail for ${this.resource.id}:`, final);
+                        // Cache handled by queue
                         return final;
                     }
                 }
             } catch (e) {
                 console.warn(`[ImageService] Failed to fetch/parse manifest for ${this.resource.id}`, e);
             }
-            // If manifest fetch fails or no thumb found, return null (fallback to icon)
             return null;
         }
 
         // Direct image URL
         const final = this.standardizeIiifUrl(sourceUrl);
         console.log(`[ImageService] ✅ Found Direct Thumbnail for ${this.resource.id}:`, final);
+        // Cache handled by queue
         return final;
     }
 
@@ -108,7 +106,7 @@ export class ImageService {
             if (manifestUrl.includes("contentdm.oclc.org") && manifestUrl.includes("/iiif/")) {
                 const match = manifestUrl.match(/\/iiif\/([^/]+)\//);
                 if (match) {
-                    return `https://cdm16022.contentdm.oclc.org/iiif/2/${match[1]}/full/400,/0/default.jpg`;
+                    return `https://cdm16022.contentdm.oclc.org/iiif/2/${match[1]}/full/200,/0/default.jpg`;
                 }
             }
             return manifestUrl; // Return manifest URL to be fetched
@@ -199,7 +197,7 @@ export class ImageService {
                 return url;
             }
             if (url.endsWith("/info.json")) {
-                return url.replace("/info.json", "/full/400,/0/default.jpg");
+                return url.replace("/info.json", "/full/200,/0/default.jpg");
             }
             if (url.includes("stacks.stanford.edu") && (url.includes("/full/!") || url.includes("/full/400,"))) {
                 return url;
@@ -207,7 +205,7 @@ export class ImageService {
             if (url.includes("/full/")) {
                 const prefix = url.split("/full/")[0];
                 // Ensure we use a decent size
-                return `${prefix}/full/400,/0/default.jpg`;
+                return `${prefix}/full/200,/0/default.jpg`;
             }
             return url;
         } catch {

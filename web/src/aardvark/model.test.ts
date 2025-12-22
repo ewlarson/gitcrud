@@ -31,6 +31,7 @@ describe('Aardvark Model', () => {
             dct_source_sm: [],
             dct_isVersionOf_sm: [],
             dct_replaces_sm: [],
+            dct_isReplacedBy_sm: [],
             dct_relation_sm: [],
             extra: {}
         };

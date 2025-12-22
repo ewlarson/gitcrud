@@ -21,7 +21,7 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 }) => {
     const [resource, setResource] = useState<Resource>(initialResource);
     const [distributions, setDistributions] = useState<Distribution[]>(initialDistributions || []);
-    const [activeTab, setActiveTab] = useState<"id" | "core" | "geo" | "admin" | "distributions" | "extra">("core");
+    const [activeTab, setActiveTab] = useState<"required" | "identification" | "provenance" | "object" | "administrative" | "related">("required");
 
     const handleChange = (field: keyof Resource, value: any) => {
         setResource((prev) => ({ ...prev, [field]: value }));
@@ -107,6 +107,17 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
         </div>
     );
 
+    const RenderSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
+        <div className="mb-6 p-4 border border-gray-200 dark:border-slate-800 rounded bg-gray-50/50 dark:bg-slate-900/20">
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-4 uppercase tracking-wider border-b border-gray-200 dark:border-slate-800 pb-1">
+                {title}
+            </h3>
+            <div className="grid grid-cols-1 gap-4">
+                {children}
+            </div>
+        </div>
+    );
+
     return (
         <form onSubmit={handleSubmit} className="flex flex-col h-full">
             <div className="flex items-center gap-4 border-b border-gray-200 dark:border-slate-800 pb-4 mb-4">
@@ -137,12 +148,12 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
 
             {/* Tabs */}
             <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 mb-4 overflow-x-auto">
-                {(["id", "core", "geo", "admin", "distributions", "extra"] as const).map((tab) => (
+                {(["required", "identification", "provenance", "object", "administrative", "related"] as const).map((tab) => (
                     <button
                         key={tab}
                         type="button"
                         onClick={() => setActiveTab(tab)}
-                        className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${activeTab === tab
+                        className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab
                             ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
                             : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                             }`}
@@ -153,141 +164,165 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto pr-2">
-                {activeTab === "id" && (
-                    <div className="space-y-4">
+
+                {activeTab === "required" && (
+                    <div className="space-y-4 p-1">
                         {renderTextField("ID", "id", true)}
-                        {renderTextField("Metadata Version", "gbl_mdVersion_s")}
-                        {renderBoolSelect("Suppressed (Hidden)", "gbl_suppressed_b")}
-                        {renderTextField("Schema Provider", "schema_provider_s")}
-                    </div>
-                )}
-
-                {activeTab === "core" && (
-                    <div className="space-y-4">
                         {renderTextField("Title", "dct_title_s", true)}
-                        {renderTagInput("Alternative Title", "dct_alternative_sm")}
-                        {renderTagInput("Description", "dct_description_sm")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Resource Class", "gbl_resourceClass_sm")}
-                        {renderTagInput("Resource Type", "gbl_resourceType_sm")}
-                        {renderTextField("Format", "dct_format_s")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Subject", "dct_subject_sm")}
-                        {renderTagInput("Theme", "dcat_theme_sm")}
-                        {renderTagInput("Keyword", "dcat_keyword_sm")}
-                        {renderTagInput("Language", "dct_language_sm")}
-                    </div>
-                )}
-
-                {activeTab === "geo" && (
-                    <div className="space-y-4">
-                        {renderTextField("Date Issued", "dct_issued_s")}
-                        {renderTextField("Index Year", "gbl_indexYear_im")}
-                        {renderTagInput("Date Range", "gbl_dateRange_drsim")}
-                        {renderTagInput("Temporal Coverage", "dct_temporal_sm")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Spatial Coverage", "dct_spatial_sm")}
-                        {renderTextArea("Geometry (WKT/Envelope)", "locn_geometry")}
-                        {renderTextArea("Bounding Box", "dcat_bbox")}
-                        {renderTextField("Centroid", "dcat_centroid")}
-                        {renderBoolSelect("Georeferenced", "gbl_georeferenced_b")}
-                    </div>
-                )}
-
-                {activeTab === "admin" && (
-                    <div className="space-y-4">
                         {renderTextField("Access Rights", "dct_accessRights_s", true)}
-                        {renderTagInput("Rights", "dct_rights_sm")}
-                        {renderTagInput("Rights Holder", "dct_rightsHolder_sm")}
-                        {renderTagInput("License", "dct_license_sm")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Creator", "dct_creator_sm")}
-                        {renderTagInput("Publisher", "dct_publisher_sm")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Identifier", "dct_identifier_sm")}
-                        {renderTextField("WxS Identifier", "gbl_wxsIdentifier_s")}
-                        {renderTextField("File Size", "gbl_fileSize_s")}
-
-                        <hr className="border-gray-200 dark:border-slate-800 my-4" />
-
-                        {renderTagInput("Relation", "dct_relation_sm")}
-                        {renderTagInput("Member Of", "pcdm_memberOf_sm")}
-                        {renderTagInput("Is Part Of", "dct_isPartOf_sm")}
-                        {renderTagInput("Source", "dct_source_sm")}
-                        {renderTagInput("Is Version Of", "dct_isVersionOf_sm")}
-                        {renderTagInput("Replaces", "dct_replaces_sm")}
-                        {renderTagInput("Is Replaced By", "dct_isReplacedBy_sm")}
+                        {renderTagInput("Resource Class", "gbl_resourceClass_sm")}
+                        {renderTextField("Metadata Version", "gbl_mdVersion_s")}
                     </div>
                 )}
 
-                {activeTab === "distributions" && (
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center mb-2">
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Manage download links, WMS services, etc.</p>
-                            <button type="button" onClick={addDistribution} className="text-xs bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 px-2 py-1 rounded border border-gray-300 dark:border-slate-600 text-slate-700 dark:text-slate-200">
-                                + Add Item
-                            </button>
-                        </div>
+                {activeTab === "identification" && (
+                    <div className="space-y-1">
+                        <RenderSection title="Descriptive">
+                            {renderTagInput("Alternative Title", "dct_alternative_sm")}
+                            {renderTagInput("Description", "dct_description_sm")}
+                            {renderTagInput("Language", "dct_language_sm")}
+                        </RenderSection>
 
-                        {distributions.length === 0 ? (
-                            <div className="p-4 bg-gray-50 dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-800 text-center text-xs text-slate-500">
-                                No distributions defined.
-                            </div>
-                        ) : (
-                            <div className="space-y-2">
-                                {distributions.map((dist, idx) => (
-                                    <div key={idx} className="flex gap-2 items-start bg-gray-50 dark:bg-slate-900/50 p-2 rounded border border-gray-200 dark:border-slate-800">
-                                        <div className="flex-1">
-                                            <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">Type (Relation)</label>
-                                            <input
-                                                className="w-full bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
-                                                placeholder="e.g. download, wms"
-                                                value={dist.relation_key}
-                                                onChange={(e) => updateDistribution(idx, "relation_key", e.target.value)}
-                                            />
-                                        </div>
-                                        <div className="flex-[3]">
-                                            <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">URL</label>
-                                            <input
-                                                className="w-full bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
-                                                placeholder="https://..."
-                                                value={dist.url}
-                                                onChange={(e) => updateDistribution(idx, "url", e.target.value)}
-                                            />
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => removeDistribution(idx)}
-                                            className="mt-4 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
-                                        >
-                                            ✕
-                                        </button>
+                        <RenderSection title="Credits">
+                            {renderTagInput("Creator", "dct_creator_sm")}
+                            {renderTagInput("Publisher", "dct_publisher_sm")}
+                        </RenderSection>
+
+                        <RenderSection title="Categories">
+                            {renderTagInput("Resource Type", "gbl_resourceType_sm")}
+                            {renderTagInput("Subject", "dct_subject_sm")}
+                            {renderTagInput("Theme", "dcat_theme_sm")}
+                            {renderTagInput("Keyword", "dcat_keyword_sm")}
+                            {renderTextField("Format", "dct_format_s")}
+                        </RenderSection>
+
+                        <RenderSection title="Temporal">
+                            {renderTextField("Date Issued", "dct_issued_s")}
+                            {renderTextField("Index Year", "gbl_indexYear_im")}
+                            {renderTagInput("Date Range", "gbl_dateRange_drsim")}
+                            {renderTagInput("Temporal Coverage", "dct_temporal_sm")}
+                        </RenderSection>
+
+                        <RenderSection title="Spatial">
+                            {renderTagInput("Spatial Coverage", "dct_spatial_sm")}
+                            {renderBoolSelect("Georeferenced", "gbl_georeferenced_b")}
+                            {renderTextField("Centroid", "dcat_centroid")}
+                        </RenderSection>
+                    </div>
+                )}
+
+                {activeTab === "provenance" && (
+                    <div className="space-y-1">
+                        <RenderSection title="Provenance Entity">
+                            {renderTextField("Provider", "schema_provider_s")}
+                        </RenderSection>
+                        <RenderSection title="Provenance Activity">
+                            <p className="text-xs text-slate-500 italic">No specific Aardvark fields mapped yet.</p>
+                        </RenderSection>
+                    </div>
+                )}
+
+                {activeTab === "object" && (
+                    <div className="space-y-1">
+                        <RenderSection title="Geometry">
+                            {renderTextArea("Geometry (WKT/Envelope)", "locn_geometry")}
+                            {renderTextArea("Bounding Box", "dcat_bbox")}
+                        </RenderSection>
+                        <RenderSection title="Technical">
+                            {renderTextField("File Size", "gbl_fileSize_s")}
+                            {renderTextField("WxS Identifier", "gbl_wxsIdentifier_s")}
+                        </RenderSection>
+                    </div>
+                )}
+
+                {activeTab === "administrative" && (
+                    <div className="space-y-1">
+                        <RenderSection title="Codes">
+                            {renderTagInput("Identifier", "dct_identifier_sm")}
+                        </RenderSection>
+
+                        <RenderSection title="Rights">
+                            {renderTagInput("Rights", "dct_rights_sm")}
+                            {renderTagInput("Rights Holder", "dct_rightsHolder_sm")}
+                        </RenderSection>
+
+                        <RenderSection title="Permissions">
+                            {renderTagInput("License", "dct_license_sm")}
+                            {renderBoolSelect("Suppressed", "gbl_suppressed_b")}
+                        </RenderSection>
+
+                        <RenderSection title="Relationships">
+                            {renderTagInput("Member Of", "pcdm_memberOf_sm")}
+                            {renderTagInput("Is Part Of", "dct_isPartOf_sm")}
+                            {renderTagInput("Is Version Of", "dct_isVersionOf_sm")}
+                            {renderTagInput("Replaces", "dct_replaces_sm")}
+                            {renderTagInput("Is Replaced By", "dct_isReplacedBy_sm")}
+                        </RenderSection>
+                    </div>
+                )}
+
+                {activeTab === "related" && (
+                    <div className="space-y-1">
+                        <RenderSection title="Related Items">
+                            {renderTagInput("Source", "dct_source_sm")}
+                            {renderTagInput("Relation", "dct_relation_sm")}
+                        </RenderSection>
+
+                        <RenderSection title="Distributions & Assets">
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center mb-2">
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Manage download links, WMS services, etc.</p>
+                                    <button type="button" onClick={addDistribution} className="text-xs bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 px-2 py-1 rounded border border-gray-300 dark:border-slate-600 text-slate-700 dark:text-slate-200">
+                                        + Add Item
+                                    </button>
+                                </div>
+
+                                {distributions.length === 0 ? (
+                                    <div className="p-4 bg-white dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                                        No distributions defined.
                                     </div>
-                                ))}
+                                ) : (
+                                    <div className="space-y-2">
+                                        {distributions.map((dist, idx) => (
+                                            <div key={idx} className="flex gap-2 items-start bg-white dark:bg-slate-950 p-2 rounded border border-gray-200 dark:border-slate-800">
+                                                <div className="flex-1">
+                                                    <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">Type (Relation)</label>
+                                                    <input
+                                                        className="w-full bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
+                                                        placeholder="e.g. download, wms"
+                                                        value={dist.relation_key}
+                                                        onChange={(e) => updateDistribution(idx, "relation_key", e.target.value)}
+                                                    />
+                                                </div>
+                                                <div className="flex-[3]">
+                                                    <label className="block text-[10px] text-slate-600 dark:text-slate-500 mb-0.5">URL</label>
+                                                    <input
+                                                        className="w-full bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-white"
+                                                        placeholder="https://..."
+                                                        value={dist.url}
+                                                        onChange={(e) => updateDistribution(idx, "url", e.target.value)}
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeDistribution(idx)}
+                                                    className="mt-4 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                )}
+                        </RenderSection>
 
-                {activeTab === "extra" && (
-                    <div className="space-y-4">
-                        {renderTagInput("Display Note", "gbl_displayNote_sm")}
-                        <div className="p-4 bg-gray-50 dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400">
-                            {JSON.stringify(resource.extra || {}, null, 2)}
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                            Extra fields are read-only in this editor version.
-                        </p>
+                        <RenderSection title="Extra (Read Only)">
+                            {renderTagInput("Display Note", "gbl_displayNote_sm")}
+                            <div className="p-4 bg-white dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 max-h-40 overflow-auto">
+                                {JSON.stringify(resource.extra || {}, null, 2)}
+                            </div>
+                        </RenderSection>
                     </div>
                 )}
             </div>

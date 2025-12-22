@@ -48,6 +48,9 @@ export interface Resource {
   dct_rights_sm: string[];
   dct_rightsHolder_sm: string[];
   dct_license_sm: string[];
+
+  // Image Service
+  thumbnail?: string;
   gbl_suppressed_b?: boolean | null;
 
   // Object

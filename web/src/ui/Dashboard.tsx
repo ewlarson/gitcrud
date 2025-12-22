@@ -5,7 +5,9 @@ import { FacetedSearchRequest, FacetedSearchResponse, facetedSearch, exportFilte
 import { ProjectConfig } from "../github/client";
 import { useUrlState } from "../hooks/useUrlState";
 import { useThumbnailQueue } from "../hooks/useThumbnailQueue";
-
+import { useStaticMapQueue } from "../hooks/useStaticMapQueue";
+import { AutosuggestInput } from "./AutosuggestInput";
+import { ActiveFilterBar } from "./ActiveFilterBar";
 
 interface DashboardProps {
     project: ProjectConfig | null;
@@ -17,7 +19,7 @@ const FACETS = [
     { field: "schema_provider_s", label: "Provider" },
     { field: "gbl_resourceClass_sm", label: "Resource Class" },
     { field: "dct_subject_sm", label: "Subject", limit: 30 },
-    { field: "gbl_indexYear_im", label: "Year" }, // Treat as discrete text facet for now, or range later?
+    { field: "gbl_indexYear_im", label: "Year" },
     { field: "dct_format_s", label: "Format" },
     { field: "dct_accessRights_s", label: "Access Rights" },
 ];
@@ -27,57 +29,48 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     const [facetsData, setFacetsData] = useState<Record<string, { value: string; count: number }[]>>({});
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
-
-    const { thumbnails, register } = useThumbnailQueue();
-
-    // Register resources for thumbnail fetching
-    useEffect(() => {
-        resources.forEach(r => register(r.id, r));
-    }, [resources, register]);
-
     const [isExporting, setIsExporting] = useState(false);
+
+    // Asset Queues
+    const { thumbnails, register } = useThumbnailQueue();
+    const { mapUrls, register: registerStaticMap } = useStaticMapQueue();
+
+    // Register resources for asset fetching
+    useEffect(() => {
+        resources.forEach(r => {
+            register(r.id, r);
+            registerStaticMap(r.id, r);
+        });
+    }, [resources, register, registerStaticMap]);
 
     // URL State Definition
     interface DashboardState {
         q: string;
         page: number;
         facets: Record<string, string[]>;
+        sort: string;
     }
 
     const [state, setState] = useUrlState<DashboardState>(
-        { q: "", page: 1, facets: {} },
+        { q: "", page: 1, facets: {}, sort: "relevance" },
         {
             toUrl: (s) => {
                 const params = new URLSearchParams();
                 if (s.q) params.set("q", s.q);
                 if (s.page > 1) params.set("page", String(s.page));
-
-                // Facets
+                if (s.sort && s.sort !== "relevance") params.set("sort", s.sort);
                 for (const [key, vals] of Object.entries(s.facets)) {
                     for (const v of vals) {
                         params.append(`f.${key}`, v);
                     }
                 }
-                // Preserve other params like 'view'?
-                // The hook tries to manage its own params. 
-                // We need to merge with existing params in the hook logic, 
-                // but here we just produce WHAT WE WANT. 
-                // The hook (my implementation above) was naive. 
-                // Let's rely on the hook's ability to merge if we improve it, 
-                // OR simpler: read existing params in toUrl? No that's circular.
-
-                // For now, let's assume Dashboard takes over params OR explicitly pass 'view' if known.
-                // Actually App.tsx manages 'view'. 
-                // If we overwrite URLParams, we lose 'view'.
-                // We need a smarter hook or just manage all in App.
-
                 return params;
             },
             fromUrl: (params) => {
                 const q = params.get("q") || "";
                 const page = Number(params.get("page")) || 1;
+                const sort = params.get("sort") || "relevance";
                 const facets: Record<string, string[]> = {};
-
                 for (const [key, val] of params.entries()) {
                     if (key.startsWith("f.")) {
                         const field = key.substring(2).trim();
@@ -85,11 +78,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                         facets[field].push(val);
                     }
                 }
-                return { q, page, facets };
+                return { q, page, facets, sort };
             },
             cleanup: (params) => {
                 params.delete("q");
                 params.delete("page");
+                params.delete("sort");
                 const keysToDelete: string[] = [];
                 for (const key of params.keys()) {
                     if (key.startsWith("f.")) {
@@ -106,7 +100,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     // Local input state for debounce
     const [inputValue, setInputValue] = useState(q);
 
-    // Sync input value if URL changes externally (popstate)
+    // Sync input value if URL changes externally
     useEffect(() => {
         setInputValue(q);
     }, [q]);
@@ -131,17 +125,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             // Convert UI Facets state to DSL filters
             for (const [field, values] of Object.entries(selectedFacets)) {
                 if (values.length > 0) {
-                    // Using "any" logic (OR) for standard facets
                     filters[field] = { any: values };
                 }
             }
 
+            let sortObj = { field: "dct_title_s", dir: "asc" } as any;
+            if (state.sort === "year_desc") sortObj = { field: "gbl_indexYear_im", dir: "desc" };
+            else if (state.sort === "year_asc") sortObj = { field: "gbl_indexYear_im", dir: "asc" };
+            else if (state.sort === "title_asc") sortObj = { field: "dct_title_s", dir: "asc" };
+            else if (state.sort === "title_desc") sortObj = { field: "dct_title_s", dir: "desc" };
+            else if (state.sort === "relevance") {
+                // Relevance = Title ASC fallback, relying on backend default if valid
+                sortObj = { field: "dct_title_s", dir: "asc" };
+            }
+
             const req: FacetedSearchRequest = {
-                q: q, // use q from URL state (which is debounced-ish via input)
+                q: q,
                 filters,
                 facets: FACETS.map(f => ({ field: f.field, limit: f.limit })),
                 page: { size: pageSize, from: (page - 1) * pageSize },
-                sort: [{ field: "dct_title_s", dir: "asc" }]
+                sort: [sortObj]
             };
 
             const res = await facetedSearch(req);
@@ -153,13 +156,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         } finally {
             setLoading(false);
         }
-    }, [q, selectedFacets, page]); // Depend on URL state
+    }, [q, selectedFacets, page, state.sort]);
 
     useEffect(() => {
         fetchData();
     }, [fetchData]);
 
-    // Toggle Facet Handler
     const toggleFacet = (field: string, value: string) => {
         setState(prev => {
             const currentFacets = prev.facets[field] || [];
@@ -170,16 +172,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 newFieldFacets = [...currentFacets, value];
             }
 
+            // Clean up empty keys
+            const newFacets = {
+                ...prev.facets,
+                [field]: newFieldFacets
+            };
+            if (newFieldFacets.length === 0) {
+                delete newFacets[field];
+            }
+
             return {
                 ...prev,
-                page: 1, // reset page on filter change
-                facets: {
-                    ...prev.facets,
-                    [field]: newFieldFacets
-                }
+                page: 1,
+                facets: newFacets
             };
         });
     };
+
+    const removeQuery = () => setState(s => ({ ...s, q: "", page: 1 }));
+    const removeFacet = (field: string, val: string) => toggleFacet(field, val); // Reuse toggle logic
+    const clearAll = () => setState(s => ({ ...s, q: "", facets: {}, page: 1 }));
 
     const handleExport = async (format: 'json' | 'csv') => {
         setIsExporting(true);
@@ -190,7 +202,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     filters[field] = { any: values };
                 }
             }
-
             const req: FacetedSearchRequest = {
                 q: q,
                 filters,
@@ -198,7 +209,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 page: { size: 1000, from: 0 },
                 sort: []
             };
-
             const blob = await exportFilteredResults(req, format);
             if (!blob) throw new Error("Export yielded no data");
 
@@ -210,7 +220,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-
         } catch (e) {
             console.error("Export failed", e);
             alert("Export failed. See console.");
@@ -224,15 +233,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     return (
         <div className="flex bg-gray-50 dark:bg-slate-900 h-full transition-colors duration-200">
             {/* Sidebar: Facets */}
-            <div className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-slate-800 p-4 overflow-y-auto bg-white dark:bg-transparent">
+            <div className="hidden md:block w-64 flex-shrink-0 border-r border-gray-200 dark:border-slate-800 p-4 overflow-y-auto bg-white dark:bg-transparent">
                 <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-4 uppercase tracking-wider">Refine Results</h3>
-
                 <div className="space-y-6">
                     {FACETS.map(f => {
                         const data = facetsData[f.field] || [];
-                        // Check if we have data or if it is selected
                         if (data.length === 0 && (!selectedFacets[f.field] || selectedFacets[f.field].length === 0)) return null;
-
                         return (
                             <div key={f.field}>
                                 <h4 className="text-sm font-medium text-slate-900 dark:text-slate-300 mb-2">{f.label}</h4>
@@ -264,54 +270,51 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             {/* Main: Results */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Top Bar */}
-                <div className="border-b border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 p-4 flex items-center justify-between backdrop-blur-sm">
-                    <div className="flex-1 max-w-2xl relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            {/* Icon */}
-                            <svg className="h-5 w-5 text-slate-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
+                <div className="border-b border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 p-4 flex flex-col gap-4 backdrop-blur-sm">
+                    {/* Search Input Row */}
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1 max-w-2xl relative">
+                            <AutosuggestInput
+                                value={inputValue}
+                                onChange={setInputValue}
+                                onSearch={(val) => setState(prev => ({ ...prev, q: val, page: 1 }))}
+                                placeholder="Search by keyword, subject, theme..."
+                            />
                         </div>
-                        <input
-                            type="text"
-                            className="block w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 pl-10 pr-3 py-2 text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 sm:text-sm"
-                            placeholder="Search by keyword..."
-                            value={inputValue}
-                            onChange={e => setInputValue(e.target.value)}
-                        />
-                    </div>
-                    <div className="ml-4 flex items-center gap-4">
-                        <span className="text-sm text-slate-500 dark:text-slate-400">
-                            Found <span className="text-slate-900 dark:text-white font-medium">{total}</span> results
-                        </span>
+                        <div className="flex items-center gap-4 flex-shrink-0">
+                            <span className="text-sm text-slate-500 dark:text-slate-400 hidden sm:inline">
+                                Found <span className="text-slate-900 dark:text-white font-medium">{total}</span> results
+                            </span>
 
-                        <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-md p-0.5 border border-gray-200 dark:border-slate-700">
-                            <button
-                                onClick={() => handleExport('json')}
-                                disabled={isExporting || total === 0}
-                                className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow"
-                                title="Download as Zip of JSON files"
+                            <select
+                                value={state.sort || "relevance"}
+                                onChange={(e) => setState(prev => ({ ...prev, sort: e.target.value, page: 1 }))}
+                                className="text-xs sm:text-sm rounded border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-indigo-500 py-1.5 pl-2 pr-8"
                             >
-                                JSON
-                            </button>
-                            <div className="w-px bg-gray-300 dark:bg-slate-700 h-4 mx-0.5"></div>
-                            <button
-                                onClick={() => handleExport('csv')}
-                                disabled={isExporting || total === 0}
-                                className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow"
-                                title="Download as CSV"
-                            >
-                                CSV
-                            </button>
+                                <option value="relevance">Relevance</option>
+                                <option value="year_desc">Year (Newest)</option>
+                                <option value="year_asc">Year (Oldest)</option>
+                                <option value="title_asc">Title (A-Z)</option>
+                                <option value="title_desc">Title (Z-A)</option>
+                            </select>
+                            <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-md p-0.5 border border-gray-200 dark:border-slate-700">
+                                <button onClick={() => handleExport('json')} disabled={isExporting || total === 0} className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow">JSON</button>
+                                <div className="w-px bg-gray-300 dark:bg-slate-700 h-4 mx-0.5"></div>
+                                <button onClick={() => handleExport('csv')} disabled={isExporting || total === 0} className="px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow">CSV</button>
+                            </div>
+                            <button onClick={onCreate} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 shadow-sm">Create New</button>
                         </div>
-
-                        <button
-                            onClick={onCreate}
-                            className="ml-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 shadow-sm"
-                        >
-                            Create New
-                        </button>
                     </div>
+
+                    {/* Active Filters */}
+                    <ActiveFilterBar
+                        query={q}
+                        facets={selectedFacets}
+                        fieldLabels={FACETS.reduce((acc, f) => ({ ...acc, [f.field]: f.label }), {} as Record<string, string>)}
+                        onRemoveQuery={removeQuery}
+                        onRemoveFacet={removeFacet}
+                        onClearAll={clearAll}
+                    />
                 </div>
 
                 {/* Results Grid/List */}
@@ -323,9 +326,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     ) : (
                         <div className="space-y-4">
                             {resources.map(r => (
-                                <div key={r.id} className="group relative flex flex-col sm:flex-row gap-4 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-900/60 transition-colors shadow-sm hover:shadow-md">
+                                <div key={r.id} className="group relative grid grid-cols-[1fr] sm:grid-cols-[auto_1fr_auto] gap-4 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-900/60 transition-colors shadow-sm hover:shadow-md">
                                     {/* Thumbnail */}
-                                    <div className="flex-shrink-0 w-24 h-24 bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 flex items-center justify-center overflow-hidden self-start">
+                                    <div className="hidden sm:flex w-52 h-52 bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 items-center justify-center overflow-hidden flex-shrink-0">
                                         {thumbnails[r.id] ? (
                                             <img src={thumbnails[r.id]!} alt="" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} referrerPolicy="no-referrer" />
                                         ) : (
@@ -335,33 +338,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                                         )}
                                     </div>
 
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className="text-lg font-medium text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">
-                                            <button onClick={() => onEdit(r.id)} className="text-left focus:outline-none">
-                                                {r.dct_title_s || "Untitled"}
-                                            </button>
-                                        </h3>
-                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
-                                            {r.dct_description_sm?.[0] || "No description."}
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            {r.gbl_resourceClass_sm?.slice(0, 3).map(c => (
-                                                <span key={c} className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
-                                                    {c}
-                                                </span>
-                                            ))}
-                                            {r.schema_provider_s && (
-                                                <span className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
-                                                    {r.schema_provider_s}
-                                                </span>
-                                            )}
+                                    {/* Content */}
+                                    <div className="min-w-0 flex flex-col justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-medium text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">
+                                                <button onClick={() => onEdit(r.id)} className="text-left focus:outline-none hover:underline">
+                                                    {r.dct_title_s || "Untitled"}
+                                                </button>
+                                            </h3>
+                                            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
+                                                {r.dct_description_sm?.[0] || "No description."}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-dashed border-gray-100 dark:border-slate-800">
+                                            <div className="flex flex-wrap gap-2">
+                                                {r.gbl_resourceClass_sm?.slice(0, 3).map(c => (
+                                                    <span key={c} className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+                                                        {c}
+                                                    </span>
+                                                ))}
+                                                {r.schema_provider_s && (
+                                                    <span className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+                                                        {r.schema_provider_s}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate max-w-[150px]" title={r.id}>
+                                                {r.id}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="flex-shrink-0 flex flex-col items-end justify-between gap-2">
-                                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public" ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"} `}>
-                                            {r.dct_accessRights_s}
-                                        </span>
-                                        <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">{r.id}</div>
+
+                                    {/* Static Map & Metadata */}
+                                    <div className="w-52 hidden sm:flex flex-col gap-2">
+                                        <div className="h-52 w-full bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 overflow-hidden relative">
+                                            {mapUrls[r.id] ? (
+                                                <img
+                                                    src={mapUrls[r.id]!}
+                                                    alt="Location Map"
+                                                    className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity"
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">
+                                                    No Map
+                                                </div>
+                                            )}
+                                            <div className="absolute top-1 right-1">
+                                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-md bg-white/80 dark:bg-slate-900/80 ${r.dct_accessRights_s === "Public" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"} `}>
+                                                    {r.dct_accessRights_s}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -393,4 +420,3 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         </div>
     );
 };
-

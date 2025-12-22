@@ -1,4 +1,4 @@
-import { getDistributionsForResource } from "../duckdb/duckdbClient";
+import { getDistributionsForResource, upsertThumbnail } from "../duckdb/duckdbClient";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Resource, Distribution } from "../aardvark/model";
 import { ImageService } from "../services/ImageService";
@@ -53,7 +53,15 @@ export function useThumbnailQueue() {
                     const service = new ImageService(item.resource, dists);
                     const url = await service.getThumbnailUrl();
                     if (url) {
-                        setThumbnails(prev => ({ ...prev, [item.id]: url }));
+                        // Fetch blob
+                        const resp = await fetch(url);
+                        if (resp.ok) {
+                            const blob = await resp.blob();
+                            await upsertThumbnail(item.id, blob);
+                            setThumbnails(prev => ({ ...prev, [item.id]: URL.createObjectURL(blob) }));
+                        } else {
+                            setThumbnails(prev => ({ ...prev, [item.id]: null }));
+                        }
                     } else {
                         // Mark as null to indicate "checked but none found" (optional, allows UI to stop loading state)
                         setThumbnails(prev => ({ ...prev, [item.id]: null }));

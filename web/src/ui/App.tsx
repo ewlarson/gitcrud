@@ -214,20 +214,30 @@ export const App: React.FC = () => {
     setSaveError(null);
   };
 
+  const handleReset = () => {
+    // Reset to root with no params
+    window.history.pushState({}, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
       <header className="border-b border-gray-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between backdrop-blur-sm">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={handleReset}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity focus:outline-none"
+          title="Reset to Dashboard"
+        >
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 dark:bg-indigo-500 text-white font-bold text-lg shadow-sm">
             A
           </span>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Aardvark Metadata Studio</h1>
+          <div className="text-left">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 leading-tight">Aardvark Metadata Studio</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Local DuckDB Edition
             </p>
           </div>
-        </div>
+        </button>
         <div className="text-right flex flex-col items-end gap-1">
           <p className="text-[11px] text-slate-500 dark:text-slate-400">{status}</p>
           <div className="flex gap-2 mt-1">
