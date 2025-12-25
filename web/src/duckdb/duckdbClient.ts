@@ -411,6 +411,22 @@ export function compileFacetedWhere(req: FacetedSearchRequest, omitField: string
         }
       }
 
+      if (condition.none && Array.isArray(condition.none) && condition.none.length > 0) {
+        const values = condition.none.map((v: string) => `'${String(v).replace(/'/g, "''")}'`).join(",");
+        if (isScalar) {
+          // Exclude value. Include NULLs? Usually yes for "Not X".
+          clauses.push(`("${field}" IS NULL OR "${field}" NOT IN (${values}))`);
+        } else {
+          // Ensure NO entry exists with this value
+          clauses.push(`NOT EXISTS (
+                    SELECT 1 FROM resources_mv m 
+                    WHERE m.id = resources.id 
+                    AND m.field = '${field}' 
+                    AND m.val IN (${values})
+                )`);
+        }
+      }
+
       if (condition.all && Array.isArray(condition.all) && condition.all.length > 0) {
         const values = condition.all.map((v: string) => `'${String(v).replace(/'/g, "''")}'`).join(",");
         const count = condition.all.length;
@@ -1267,7 +1283,7 @@ export async function importJsonData(json: any, options: { skipSave?: boolean } 
 
 export interface FacetedSearchRequest {
   q?: string;
-  filters?: Record<string, any>; // { field: { any: [], all: [], gte: n, lte: n } }
+  filters?: Record<string, any>; // { field: { any: [], all: [], none: [], gte: n, lte: n } }
   sort?: { field: string; dir: "asc" | "desc" }[];
   page?: { size: number; from: number };
   facets?: { field: string; limit?: number }[];

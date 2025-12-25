@@ -141,9 +141,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             const filters: Record<string, any> = {};
 
             // Convert UI Facets state to DSL filters
-            for (const [field, values] of Object.entries(selectedFacets)) {
+            for (const [key, values] of Object.entries(selectedFacets)) {
                 if (values.length > 0) {
-                    filters[field] = { any: values };
+                    if (key.startsWith("-")) {
+                        const field = key.substring(1);
+                        if (!filters[field]) filters[field] = {};
+                        filters[field].none = values;
+                    } else {
+                        if (!filters[key]) filters[key] = {};
+                        filters[key].any = values;
+                    }
                 }
             }
 
@@ -151,7 +158,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             if (state.yearRange) {
                 const parts = state.yearRange.split(",").map(Number);
                 if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-                    filters['gbl_indexYear_im'] = { gte: parts[0], lte: parts[1] };
+                    filters['gbl_indexYear_im'] = { ...filters['gbl_indexYear_im'], gte: parts[0], lte: parts[1] };
                 }
             }
 
@@ -197,48 +204,62 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         fetchData();
     }, [fetchData]);
 
-    const toggleFacet = (field: string, value: string) => {
+    const toggleFacet = (field: string, value: string, mode: 'include' | 'exclude' = 'include') => {
+        const key = mode === 'exclude' ? `-${field}` : field;
+        // Construct opposite key to ensure we don't have same value in both include and exclude
+        const oppositeKey = mode === 'exclude' ? field : `-${field}`;
+
         setState(prev => {
-            const currentFacets = prev.facets[field] || [];
-            let newFieldFacets;
-            if (currentFacets.includes(value)) {
-                newFieldFacets = currentFacets.filter(v => v !== value);
+            const currentObj = { ...prev.facets };
+            const currentVals = currentObj[key] || [];
+
+            // Toggle value in target key
+            let newVals;
+            if (currentVals.includes(value)) {
+                newVals = currentVals.filter(v => v !== value);
             } else {
-                newFieldFacets = [...currentFacets, value];
+                newVals = [...currentVals, value];
             }
 
-            // Clean up empty keys
-            const newFacets = {
-                ...prev.facets,
-                [field]: newFieldFacets
-            };
-            if (newFieldFacets.length === 0) {
-                delete newFacets[field];
+            if (newVals.length > 0) currentObj[key] = newVals;
+            else delete currentObj[key];
+
+            // Remove from opposite key if present
+            if (currentObj[oppositeKey] && currentObj[oppositeKey].includes(value)) {
+                const oppositeVals = currentObj[oppositeKey].filter(v => v !== value);
+                if (oppositeVals.length > 0) currentObj[oppositeKey] = oppositeVals;
+                else delete currentObj[oppositeKey];
             }
 
             return {
                 ...prev,
                 page: 1,
-                facets: newFacets
+                facets: currentObj
             };
         });
     };
 
     const removeQuery = () => setState(s => ({ ...s, q: "", page: 1 }));
-    const removeFacet = (field: string, val: string) => toggleFacet(field, val); // Reuse toggle logic
-    const clearAll = () => setState(s => ({ ...s, q: "", facets: {}, page: 1 }));
+    // const removeFacet = (field: string, val: string) => toggleFacet(field, val); // No longer simple reuse
 
     const handleExport = async (format: 'json' | 'csv') => {
         setIsExporting(true);
         try {
             const filters: Record<string, any> = {};
-            for (const [field, values] of Object.entries(selectedFacets)) {
+            for (const [key, values] of Object.entries(selectedFacets)) {
                 if (values.length > 0) {
-                    filters[field] = { any: values };
+                    if (key.startsWith("-")) {
+                        const field = key.substring(1);
+                        if (!filters[field]) filters[field] = {};
+                        filters[field].none = values;
+                    } else {
+                        if (!filters[key]) filters[key] = {};
+                        filters[key].any = values;
+                    }
                 }
             }
             if (currentYearRange) {
-                filters['gbl_indexYear_im'] = { gte: currentYearRange[0], lte: currentYearRange[1] };
+                filters['gbl_indexYear_im'] = { ...filters['gbl_indexYear_im'], gte: currentYearRange[0], lte: currentYearRange[1] };
             }
             const req: FacetedSearchRequest = {
                 q: q,
@@ -351,16 +372,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                                 <h4 className="text-sm font-medium text-slate-900 dark:text-slate-300 mb-2">{f.label}</h4>
                                 <ul className="space-y-1">
                                     {data.map(item => {
-                                        const isChecked = selectedFacets[f.field]?.includes(item.value);
+                                        const isIncluded = selectedFacets[f.field]?.includes(item.value);
+                                        const isExcluded = selectedFacets[`-${f.field}`]?.includes(item.value);
+
                                         return (
-                                            <li key={item.value}>
-                                                <div
-                                                    onClick={() => toggleFacet(f.field, item.value)}
-                                                    className={`flex items-center text-sm cursor-pointer py-0.5 ${isChecked ? "font-bold text-indigo-600 dark:text-indigo-400" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"}`}
+                                            <li key={item.value} className="flex items-center justify-between group">
+                                                <button
+                                                    onClick={() => toggleFacet(f.field, item.value, 'include')}
+                                                    className={`flex-1 flex items-center text-sm cursor-pointer py-0.5 text-left min-w-0 ${isIncluded
+                                                            ? "font-bold text-indigo-600 dark:text-indigo-400"
+                                                            : isExcluded
+                                                                ? "text-red-500 line-through decoration-red-500 opacity-70"
+                                                                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+                                                        }`}
                                                 >
                                                     <span className="flex-1 truncate" title={item.value}>{item.value || "<Empty>"}</span>
-                                                    <span className="ml-2 text-xs text-slate-400 dark:text-slate-600 font-mono">{item.count}</span>
-                                                </div>
+                                                    <span className="ml-2 text-xs text-slate-400 dark:text-slate-600 font-mono flex-shrink-0">{item.count}</span>
+                                                </button>
+
+                                                {/* Exclude Button (Only show if not already excluded, or toggle off?) */}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleFacet(f.field, item.value, 'exclude');
+                                                    }}
+                                                    className={`ml-1 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 ${isExcluded ? 'text-red-600 opacity-100' : ''}`}
+                                                    title="Exclude this value"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM6.75 9.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z" clipRule="evenodd" />
+                                                    </svg>
+                                                </button>
                                             </li>
                                         );
                                     })}

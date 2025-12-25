@@ -76,24 +76,34 @@ export const ActiveFilterBar: React.FC<ActiveFilterBarProps> = ({
             )}
 
             {/* Facet Chips */}
-            {Object.entries(facets).flatMap(([field, values]) =>
-                values.map((val) => (
+            {Object.entries(facets).flatMap(([field, values]) => {
+                const isExclude = field.startsWith("-");
+                const realField = isExclude ? field.substring(1) : field;
+                const styleClasses = isExclude
+                    ? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-100 dark:border-red-800"
+                    : "bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border-sky-100 dark:border-sky-800";
+                const hoverClasses = isExclude
+                    ? "hover:bg-red-200 dark:hover:bg-red-800 text-red-600 dark:text-red-400"
+                    : "hover:bg-sky-200 dark:hover:bg-sky-800 text-sky-600 dark:text-sky-400";
+
+                return values.map((val) => (
                     <span
                         key={`${field}-${val}`}
-                        className="inline-flex items-center gap-1 rounded-full bg-sky-50 dark:bg-sky-900/30 px-3 py-1 text-xs font-medium text-sky-700 dark:text-sky-300 border border-sky-100 dark:border-sky-800"
+                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border ${styleClasses}`}
                     >
-                        <span className="opacity-70">{getLabel(field)}:</span>
+                        {isExclude && <span className="font-bold mr-0.5">NOT</span>}
+                        <span className="opacity-70">{getLabel(realField)}:</span>
                         {val}
                         <button
                             onClick={() => onRemoveFacet(field, val)}
-                            className="ml-1 rounded-full hover:bg-sky-200 dark:hover:bg-sky-800 p-0.5 text-sky-600 dark:text-sky-400 focus:outline-none"
+                            className={`ml-1 rounded-full p-0.5 focus:outline-none ${hoverClasses}`}
                             title="Remove filter"
                         >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                     </span>
-                ))
-            )}
+                ));
+            })}
 
             {/* Clear All */}
             <button
