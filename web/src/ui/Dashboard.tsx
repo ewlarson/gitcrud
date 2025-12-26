@@ -8,8 +8,11 @@ import { ProjectConfig } from "../github/client";
 import { useUrlState } from "../hooks/useUrlState";
 import { useThumbnailQueue } from "../hooks/useThumbnailQueue";
 import { useStaticMapQueue } from "../hooks/useStaticMapQueue";
-import { ResourceList } from "./ResourceList";
-import { AutosuggestInput } from "./AutosuggestInput";
+import { GalleryView } from "./GalleryView";
+import { ResultsMapView } from "./ResultsMapView";
+import { DashboardResultsList } from "./DashboardResultsList";
+
+
 import { ActiveFilterBar } from "./ActiveFilterBar";
 import { MapFacet } from "./MapFacet";
 import { TimelineFacet } from "./TimelineFacet";
@@ -22,16 +25,17 @@ interface DashboardProps {
 }
 
 const FACETS = [
+    { field: "dct_spatial_sm", label: "Place", limit: 5 },
     { field: "gbl_resourceClass_sm", label: "Resource Class", limit: 5 },
     { field: "gbl_resourceType_sm", label: "Resource Type", limit: 5 },
-    { field: "dct_spatial_sm", label: "Place", limit: 5 },
     { field: "dct_subject_sm", label: "Subject", limit: 5 },
     { field: "dcat_theme_sm", label: "Theme", limit: 5 },
     { field: "gbl_indexYear_im", label: "Year", limit: 10 },
     { field: "dct_language_sm", label: "Language", limit: 5 },
-    { field: "dct_publisher_sm", label: "Publisher", limit: 5 },
     { field: "dct_creator_sm", label: "Creator", limit: 5 },
-    { field: "dct_format_s", label: "Format", limit: 5 },
+    { field: "schema_provider_s", label: "Provider", limit: 5 },
+    { field: "dct_accessRights_s", label: "Access", limit: 5 },
+    { field: "gbl_georeferenced_b", label: "Georeferenced", limit: 5 },
 ];
 
 export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate }) => {
@@ -61,10 +65,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
         sort: string;
         bbox: string | undefined; // "minX,minY,maxX,maxY"
         yearRange: string | undefined; // "min,max"
+        view: 'list' | 'gallery' | 'map';
     }
 
     const [state, setState] = useUrlState<DashboardState>(
-        { q: "", page: 1, facets: {}, sort: "relevance", bbox: undefined, yearRange: undefined },
+        { q: "", page: 1, facets: {}, sort: "relevance", bbox: undefined, yearRange: undefined, view: 'list' },
         {
             toUrl: (s) => {
                 const params = new URLSearchParams();
@@ -73,6 +78,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 if (s.sort && s.sort !== "relevance") params.set("sort", s.sort);
                 if (s.bbox) params.set("bbox", s.bbox);
                 if (s.yearRange) params.set("yearRange", s.yearRange);
+                if (s.view && s.view !== 'list') params.set("view", s.view);
                 for (const [key, vals] of Object.entries(s.facets)) {
                     for (const v of vals) {
                         params.append(`f.${key} `, v);
@@ -86,6 +92,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 const sort = params.get("sort") || "relevance";
                 const bbox = params.get("bbox") || undefined;
                 const yearRange = params.get("yearRange") || undefined;
+                const viewParam = params.get("view");
+                const view = (viewParam === 'gallery' || viewParam === 'map') ? viewParam : 'list';
                 const facets: Record<string, string[]> = {};
                 for (const [key, val] of params.entries()) {
                     if (key.startsWith("f.")) {
@@ -94,7 +102,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                         facets[field].push(val);
                     }
                 }
-                return { q, page, facets, sort, bbox, yearRange };
+                return { q, page, facets, sort, bbox, yearRange, view };
             },
             cleanup: (params) => {
                 params.delete("q");
@@ -102,6 +110,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 params.delete("sort");
                 params.delete("bbox");
                 params.delete("yearRange");
+                params.delete("view");
                 const keysToDelete: string[] = [];
                 for (const key of params.keys()) {
                     if (key.startsWith("f.")) {
@@ -115,23 +124,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
 
     const { q, page, facets: selectedFacets } = state;
 
-    // Local input state for debounce
-    const [inputValue, setInputValue] = useState(q);
-
-    // Sync input value if URL changes externally
-    useEffect(() => {
-        setInputValue(q);
-    }, [q]);
-
-    // Debounce update to URL
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            if (inputValue !== q) {
-                setState(prev => ({ ...prev, q: inputValue, page: 1 }));
-            }
-        }, 400);
-        return () => clearTimeout(handler);
-    }, [inputValue, q, setState]);
+    // Local input state for debounce removed (moved to App)
 
     const pageSize = 20;
 
@@ -363,51 +356,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     />
                 </ErrorBoundary>
 
-                <div className="space-y-6">
-                    {FACETS.filter(f => f.field !== 'gbl_indexYear_im').map(f => {
+                <div className="space-y-4">
+                    {FACETS.filter(f => f.field !== 'gbl_indexYear_im').map((f, index) => {
                         const data = facetsData[f.field] || [];
-                        if (data.length === 0 && (!selectedFacets[f.field] || selectedFacets[f.field].length === 0)) return null;
+                        const selectedValues = selectedFacets[f.field] || [];
+                        const excludedValues = selectedFacets[`-${f.field}`] || [];
+
+                        // Pass down selection/data + defaultOpen logic
+                        // First 5 (index 0-4) default open, rest closed.
+                        // UNLESS active selection exists, then force open.
                         return (
-                            <div key={f.field}>
-                                <h4 className="text-sm font-medium text-slate-900 dark:text-slate-300 mb-2">{f.label}</h4>
-                                <ul className="space-y-1">
-                                    {data.map(item => {
-                                        const isIncluded = selectedFacets[f.field]?.includes(item.value);
-                                        const isExcluded = selectedFacets[`-${f.field}`]?.includes(item.value);
-
-                                        return (
-                                            <li key={item.value} className="flex items-center justify-between group">
-                                                <button
-                                                    onClick={() => toggleFacet(f.field, item.value, 'include')}
-                                                    className={`flex-1 flex items-center text-sm cursor-pointer py-0.5 text-left min-w-0 ${isIncluded
-                                                            ? "font-bold text-indigo-600 dark:text-indigo-400"
-                                                            : isExcluded
-                                                                ? "text-red-500 line-through decoration-red-500 opacity-70"
-                                                                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
-                                                        }`}
-                                                >
-                                                    <span className="flex-1 truncate" title={item.value}>{item.value || "<Empty>"}</span>
-                                                    <span className="ml-2 text-xs text-slate-400 dark:text-slate-600 font-mono flex-shrink-0">{item.count}</span>
-                                                </button>
-
-                                                {/* Exclude Button (Only show if not already excluded, or toggle off?) */}
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        toggleFacet(f.field, item.value, 'exclude');
-                                                    }}
-                                                    className={`ml-1 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 ${isExcluded ? 'text-red-600 opacity-100' : ''}`}
-                                                    title="Exclude this value"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM6.75 9.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z" clipRule="evenodd" />
-                                                    </svg>
-                                                </button>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            </div>
+                            <FacetSection
+                                key={f.field}
+                                field={f.field}
+                                label={f.label}
+                                data={data}
+                                selectedValues={selectedValues}
+                                excludedValues={excludedValues}
+                                onToggle={toggleFacet}
+                                defaultOpen={index < 5}
+                            />
                         );
                     })}
                 </div>
@@ -417,20 +385,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Top Bar */}
                 <div className="z-10 relative border-b border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 p-4 flex flex-col gap-4 backdrop-blur-sm">
-                    {/* Search Input Row */}
+                    {/* Top Bar removed inputs, now just counts/view toggle? */
+                        /* Actually we want the count and view toggle to remain. Input is gone. */
+                    }
                     <div className="flex items-center justify-between gap-4">
-                        <div className="flex-1 max-w-2xl relative">
-                            <AutosuggestInput
-                                value={inputValue}
-                                onChange={setInputValue}
-                                onSearch={handleAutosuggest}
-                                placeholder="Search by keyword, subject, theme..."
-                            />
-                        </div>
                         <div className="flex items-center gap-4 flex-shrink-0">
-                            <span className="text-sm text-slate-500 dark:text-slate-400 hidden sm:inline">
+                            {/* Breadcrumb or Active Filters could go here? For now just the count. */}
+                            <span className="text-sm text-slate-500 dark:text-slate-400">
                                 Found <span className="text-slate-900 dark:text-white font-medium">{total}</span> results
                             </span>
+                        </div>
+                        <div className="flex items-center gap-4 flex-shrink-0">
+
+                            <div className="flex bg-gray-100 dark:bg-slate-800 rounded-md p-0.5 border border-gray-200 dark:border-slate-700 mr-2">
+                                <button
+                                    onClick={() => setState(prev => ({ ...prev, view: 'list' }))}
+                                    className={`px-2 py-1.5 rounded text-xs transition-colors ${state.view === 'list' || !state.view ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                    title="List View"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M2.5 4.75A.75.75 0 013.25 4h14.5a.75.75 0 010 1.5H3.25A.75.75 0 012.5 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2.5 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H3.25A.75.75 0 012.5 10z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setState(prev => ({ ...prev, view: 'gallery' }))}
+                                    className={`px-2 py-1.5 rounded text-xs transition-colors ${state.view === 'gallery' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                    title="Gallery View"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M1 2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V2zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H7a1 1 0 01-1-1V2zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1V2zM1 7a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V7zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H7a1 1 0 01-1-1V7zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1V7zM1 12a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1v-2zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1H7a1 1 0 01-1-1v-2zm5 0a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setState(prev => ({ ...prev, view: 'map' }))}
+                                    className={`px-2 py-1.5 rounded text-xs transition-colors ${state.view === 'map' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                    title="Map View"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.006.003.002.001.003.001a.79.79 0 00.01.003zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
 
                             <select
                                 value={state.sort || "relevance"}
@@ -470,82 +465,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     />
                 </div>
 
-                {/* Results Grid/List */}
-                <div className="flex-1 overflow-y-auto p-4">
+                {/* Results Grid/List/Map */}
+                <div className={`flex-1 overflow-y-auto ${state.view === 'map' ? 'p-0' : 'p-4'}`}>
                     {loading ? (
                         <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
-                    ) : resources.length === 0 ? (
-                        <div className="flex h-64 items-center justify-center text-slate-500">No results found.</div>
                     ) : (
-                        <div className="space-y-4">
-                            {resources.map(r => (
-                                <div key={r.id} className="group relative grid grid-cols-[1fr] sm:grid-cols-[auto_1fr_auto] gap-4 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-900/60 transition-colors shadow-sm hover:shadow-md">
-                                    {/* Thumbnail */}
-                                    <div className="hidden sm:flex w-52 h-52 bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 items-center justify-center overflow-hidden flex-shrink-0">
-                                        {thumbnails[r.id] ? (
-                                            <img src={thumbnails[r.id]!} alt="" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} referrerPolicy="no-referrer" />
-                                        ) : (
-                                            <span className="text-3xl opacity-20 grayscale select-none">
-                                                {r.gbl_resourceClass_sm?.includes("Maps") ? "🗺️" : "📄"}
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {/* Content */}
-                                    <div className="min-w-0 flex flex-col justify-between">
-                                        <div>
-                                            <h3 className="text-lg font-medium text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">
-                                                <button onClick={() => onEdit(r.id)} className="text-left focus:outline-none hover:underline">
-                                                    {r.dct_title_s || "Untitled"}
-                                                </button>
-                                            </h3>
-                                            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
-                                                {r.dct_description_sm?.[0] || "No description."}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-dashed border-gray-100 dark:border-slate-800">
-                                            <div className="flex flex-wrap gap-2">
-                                                {r.gbl_resourceClass_sm?.slice(0, 3).map(c => (
-                                                    <span key={c} className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
-                                                        {c}
-                                                    </span>
-                                                ))}
-                                                {r.schema_provider_s && (
-                                                    <span className="inline-flex items-center rounded-sm bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
-                                                        {r.schema_provider_s}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate max-w-[150px]" title={r.id}>
-                                                {r.id}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Static Map & Metadata */}
-                                    <div className="w-52 hidden sm:flex flex-col gap-2">
-                                        <div className="h-52 w-full bg-gray-100 dark:bg-slate-950 rounded border border-gray-200 dark:border-slate-800 overflow-hidden relative">
-                                            {mapUrls[r.id] ? (
-                                                <img
-                                                    src={mapUrls[r.id]!}
-                                                    alt="Location Map"
-                                                    className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity"
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">
-                                                    No Map
-                                                </div>
-                                            )}
-                                            <div className="absolute top-1 right-1">
-                                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-md bg-white/80 dark:bg-slate-900/80 ${r.dct_accessRights_s === "Public" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
-                                                    {r.dct_accessRights_s}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        state.view === 'map' ? (
+                            <ResultsMapView resources={resources} onEdit={onEdit} />
+                        ) : state.view === 'gallery' ? (
+                            <GalleryView resources={resources} thumbnails={thumbnails} onEdit={onEdit} />
+                        ) : (
+                            <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onEdit={onEdit} page={page} />
+                        )
                     )}
                 </div>
 
@@ -559,7 +490,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                         >
                             Previous
                         </button>
-                        <span className="text-sm text-slate-500 dark:text-slate-400">Page {page} of {totalPages}</span>
+                        <span className="text-sm text-slate-500 dark:text-slate-400">
+                            Showing <span className="font-medium text-slate-900 dark:text-white">{(page - 1) * 20 + 1}</span> to{" "}
+                            <span className="font-medium text-slate-900 dark:text-white">{Math.min(page * 20, total)}</span> of{" "}
+                            <span className="font-medium text-slate-900 dark:text-white">{total}</span> results
+                        </span>
                         <button
                             disabled={page >= totalPages}
                             onClick={() => setState(prev => ({ ...prev, page: prev.page + 1 }))}
@@ -570,6 +505,84 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                     </div>
                 )}
             </div>
+        </div>
+    );
+};
+
+const FacetSection: React.FC<{
+    field: string;
+    label: string;
+    data: { value: string; count: number }[];
+    selectedValues: string[];
+    excludedValues: string[];
+    onToggle: (type: string, value: string, mode: 'include' | 'exclude') => void;
+    defaultOpen: boolean;
+}> = ({ field, label, data, selectedValues, excludedValues, onToggle, defaultOpen }) => {
+    const hasActiveSelection = selectedValues.length > 0 || excludedValues.length > 0;
+    const [isOpen, setIsOpen] = useState(defaultOpen || hasActiveSelection);
+
+    useEffect(() => {
+        if (hasActiveSelection) {
+            setIsOpen(true);
+        }
+    }, [hasActiveSelection]);
+
+    if (data.length === 0 && !hasActiveSelection) return null;
+
+    return (
+        <div className="border-b border-gray-200 dark:border-slate-800 pb-2 last:border-0 last:pb-0">
+            <button
+                className="flex items-center justify-between w-full py-2 group"
+                onClick={() => setIsOpen(!isOpen)}
+            >
+                <h4 className="text-sm font-medium text-slate-900 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                    {label}
+                </h4>
+                <span className={`text-slate-400 dark:text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                    </svg>
+                </span>
+            </button>
+
+            {isOpen && (
+                <ul className="space-y-1 mb-2">
+                    {data.map(item => {
+                        const isIncluded = selectedValues.includes(item.value);
+                        const isExcluded = excludedValues.includes(item.value);
+
+                        return (
+                            <li key={item.value} className="flex items-center justify-between group/item">
+                                <button
+                                    onClick={() => onToggle(field, item.value, 'include')}
+                                    className={`flex-1 flex items-center text-sm cursor-pointer py-0.5 text-left min-w-0 ${isIncluded
+                                        ? "font-bold text-indigo-600 dark:text-indigo-400"
+                                        : isExcluded
+                                            ? "text-red-500 line-through decoration-red-500 opacity-70"
+                                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+                                        }`}
+                                >
+                                    <span className="flex-1 truncate" title={item.value}>{item.value || "<Empty>"}</span>
+                                    <span className="ml-2 text-xs text-slate-400 dark:text-slate-600 font-mono flex-shrink-0">{item.count}</span>
+                                </button>
+
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggle(field, item.value, 'exclude');
+                                    }}
+                                    className={`ml-1 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-600 transition-colors opacity-0 group-hover/item:opacity-100 focus:opacity-100 ${isExcluded ? 'text-red-600 opacity-100' : ''}`}
+                                    title="Exclude this value"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM6.75 9.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
         </div>
     );
 };

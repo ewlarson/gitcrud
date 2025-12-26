@@ -25,7 +25,7 @@ export const ResourceList: React.FC<ResourceListProps> = ({
     // Search/Sort/Page State
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(10);
+    const [pageSize, setPageSize] = useState(20);
     const [sortBy, setSortBy] = useState("id");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
@@ -97,7 +97,6 @@ export const ResourceList: React.FC<ResourceListProps> = ({
                     />
                     <button
                         onClick={onCreate}
-                        disabled={!project}
                         className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         Create New

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Resource, resourceToJson, REPEATABLE_STRING_FIELDS, Distribution } from "../aardvark/model";
 // GithubClient imports removed
-import { getDuckDbContext, queryResources, queryResourceById, saveDb, upsertResource, queryDistributionsForResource } from "../duckdb/duckdbClient";
+import { getDuckDbContext, queryResources, queryResourceById, saveDb, upsertResource, queryDistributionsForResource, countResources } from "../duckdb/duckdbClient";
 import { TabularEditor } from "./TabularEditor";
 import { TagInput } from "./TagInput";
 import { ResourceList } from "./ResourceList";
@@ -10,6 +10,7 @@ import { ResourceEdit } from "./ResourceEdit";
 import { DistributionsList } from "./DistributionsList";
 import { Dashboard } from "./Dashboard";
 import { useUrlState } from "../hooks/useUrlState";
+import { AutosuggestInput } from "./AutosuggestInput";
 import { ThemeToggle } from "./ThemeToggle";
 
 
@@ -18,7 +19,7 @@ export const App: React.FC = () => {
   const [resourceCount, setResourceCount] = useState<number>(0);
 
   // URL State
-  type ViewType = "dashboard" | "admin" | "edit" | "create" | "import" | "distributions";
+  type ViewType = "dashboard" | "admin" | "edit" | "create" | "import" | "distributions" | "list" | "gallery" | "map";
   interface AppState {
     view: ViewType;
     id?: string;
@@ -52,13 +53,13 @@ export const App: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [status, setStatus] = useState<string>("Local Mode");
+
 
   // Refresh resource count from DuckDB
   async function refreshResourceCount() {
     try {
-      const resources = await queryResources();
-      setResourceCount(resources.length);
+      const count = await countResources();
+      setResourceCount(count);
     } catch (err) {
       console.error("Failed to refresh resource count from DuckDB", err);
       setResourceCount(0);
@@ -175,26 +176,82 @@ export const App: React.FC = () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
 
+  // Global Search State
+  const [searchValue, setSearchValue] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("q") || "";
+  });
+
+  // Sync search value with URL
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      setSearchValue(params.get("q") || "");
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const handleSearch = (val: string) => {
+    const params = new URLSearchParams(window.location.search);
+    if (val) {
+      params.set("q", val);
+    } else {
+      params.delete("q");
+    }
+    // Ensure we are on the dashboard
+    if (view !== "dashboard") {
+      params.delete("view");
+    }
+    // Reset page to 1 on new search
+    params.set("page", "1");
+
+    // Update URL
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState({}, "", newUrl);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
-      <header className="border-b border-gray-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between backdrop-blur-sm">
-        <button
-          onClick={handleReset}
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity focus:outline-none"
-          title="Reset to Dashboard"
-        >
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 dark:bg-indigo-500 text-white font-bold text-lg shadow-sm">
-            A
-          </span>
-          <div className="text-left">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 leading-tight">Aardvark Metadata Studio</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Local DuckDB Edition
-            </p>
+      <header className="border-b border-gray-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between backdrop-blur-sm sticky top-0 z-50">
+        <div className="flex items-center gap-4 flex-1">
+          <button
+            onClick={handleReset}
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity focus:outline-none flex-shrink-0 w-96 pr-4"
+            title="Reset to Dashboard"
+          >
+            <svg
+              className="h-10 w-10 text-indigo-600 dark:text-indigo-400"
+              viewBox="0 0 100 100"
+              fill="currentColor"
+              aria-label="Aardvark Logo"
+            >
+              {/* Simple stylized Aardvark/Anteater silhouette */}
+              <path d="M85.4,36.6c-2.7-5.2-7.5-8.5-12.8-9.4c-2.6-0.4-5.2-0.1-7.7,0.8c-4.4,1.6-8.2,4.8-11,8.9c-0.6,0.9-1.2,1.8-1.7,2.8 c-0.6-0.7-1.3-1.4-2-2.1c-1.6-1.6-3.4-2.9-5.4-3.8c-2-0.9-4.2-1.3-6.4-1.2c-2.2,0.1-4.3,0.7-6.2,1.8c-3.8,2.1-6.7,5.5-8.3,9.5 c-0.4,1-0.7,2-1,3.1c-1.3-0.5-2.6-1-3.9-1.4c-3.9-1.2-8.1-1.3-12-0.3c-1.9,0.5-3.8,1.3-5.5,2.4c-3.4,2.2-6,5.4-7.4,9.1 c-0.7,1.8-1,3.8-1,5.7c0,5.8,2.9,11.2,7.7,14.6c4.8,3.4,10.8,4.5,16.6,3.1c1.4-0.3,2.8-0.8,4.1-1.5c1.3,1.6,2.9,3,4.6,4.1 c3.5,2.2,7.7,3.1,11.8,2.4c4.1-0.7,7.8-3,10.4-6.3c1.3-1.6,2.2-3.4,2.8-5.3c1,0.7,2.1,1.3,3.2,1.8c2.3,1,4.9,1.4,7.4,1.1 c2.5-0.3,4.9-1.3,6.8-2.9c3.9-3.2,6.3-8,6.5-13.1C98.4,45.4,94,39,89,36c-1.1-0.7-2.3-1.2-3.6-1.5L85.4,36.6z M22,65 c-3.3,0.8-6.8,0.2-9.6-1.8c-2.8-2-4.4-5.2-4.4-8.6c0-1.2,0.2-2.3,0.6-3.4c0.8-2.2,2.4-4.1,4.4-5.3c0.9-0.6,2-1,3.1-1.3 c2.2-0.6,4.6-0.5,6.8,0.2c0.8,0.2,1.5,0.5,2.2,0.9L22,65z M65,65c-2.1,2.7-5.3,4.3-8.8,4.3c-1.2,0-2.4-0.2-3.5-0.6 c-2.2-0.8-4-2.5-4.9-4.7c-0.9-2.2-0.8-4.7,0.2-6.8c1-2.1,3-3.7,5.2-4.4c2.2-0.7,4.7-0.5,6.8,0.6c2.1,1,3.7,3,4.4,5.2 C65.2,60.8,65.8,63,65,65z M85,55c0,3.3-1.5,6.4-4,8.5c-1.2,1-2.7,1.7-4.2,1.9c-1.6,0.2-3.1-0.1-4.6-0.7c-2.9-1.2-5-3.9-5.4-7 c-0.2-1.6,0.1-3.1,0.7-4.6c1.2-2.9,3.9-5,7-5.4c1.6-0.2,3.1,0.1,4.6,0.7C82.1,49.6,85,52.1,85,55z" />
+            </svg>
+            <div className="text-left hidden sm:block">
+              <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 leading-tight">Aardvark Metadata Studio</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Local DuckDB Edition
+              </p>
+            </div>
+          </button>
+
+          {/* Global Search */}
+          <div className="flex-1 max-w-xl mx-4">
+            <AutosuggestInput
+              value={searchValue}
+              onChange={setSearchValue}
+              onSearch={handleSearch}
+              placeholder="Search resources..."
+              className="w-full"
+            />
           </div>
-        </button>
-        <div className="text-right flex flex-col items-end gap-1">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">{status}</p>
+        </div>
+
+        <div className="text-right flex flex-col items-end gap-1 flex-shrink-0">
+
           <div className="flex gap-2 mt-1 items-center">
 
             <button
@@ -215,7 +272,7 @@ export const App: React.FC = () => {
             >
               Distributions
             </button>
-            <div className="w-[1px] h-6 bg-gray-300 dark:bg-slate-800 mx-1"></div>
+
             <button
               type="button"
               onClick={() => setUrlState({ view: "import" })}
@@ -235,7 +292,7 @@ export const App: React.FC = () => {
         <div className="flex-1 flex flex-col min-h-0 space-y-6">
 
           <section className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0 overflow-hidden shadow-sm dark:shadow-none backdrop-blur-sm">
-            {view === "dashboard" && (
+            {(view === "dashboard" || view === "list" || view === "gallery" || view === "map") && (
               <div className="flex flex-col h-full -m-6">
                 <Dashboard
                   project={null}

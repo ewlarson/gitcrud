@@ -1679,3 +1679,18 @@ export async function suggest(text: string, limit: number = 10): Promise<Suggest
     return [];
   }
 }
+
+export async function countResources(): Promise<number> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return 0;
+  try {
+    const res = await ctx.conn.query('SELECT count(*) as c FROM resources');
+    if (res.numRows === 0) return 0;
+    const val = res.toArray()[0]['c'];
+    return Number(val);
+  } catch (e) {
+    console.warn("Count resources failed", e);
+    return 0;
+  }
+}
+

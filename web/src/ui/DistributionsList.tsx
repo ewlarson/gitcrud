@@ -13,6 +13,9 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
     const [keyword, setKeyword] = useState("");
     const [debouncedKeyword, setDebouncedKeyword] = useState("");
 
+    const [sort, setSort] = useState("resource_id");
+    const [dir, setDir] = useState<"asc" | "desc">("asc");
+
     // Debounce keyword
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -27,7 +30,7 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const res: DistributionResult = await queryDistributions(page, pageSize, "resource_id", "asc", debouncedKeyword);
+            const res: DistributionResult = await queryDistributions(page, pageSize, sort, dir, debouncedKeyword);
             setDistributions(res.distributions);
             setTotal(res.total);
         } catch (err) {
@@ -35,11 +38,20 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
         } finally {
             setLoading(false);
         }
-    }, [page, debouncedKeyword]);
+    }, [page, debouncedKeyword, sort, dir]);
 
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    const handleSort = (column: string) => {
+        if (sort === column) {
+            setDir(dir === "asc" ? "desc" : "asc");
+        } else {
+            setSort(column);
+            setDir("asc");
+        }
+    };
 
     const totalPages = Math.ceil(total / pageSize);
 
@@ -52,7 +64,7 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
                         {total} total
                     </span>
                 </div>
-                <div>
+                <div className="flex items-center gap-3">
                     <input
                         type="text"
                         placeholder="Search ID, Relation, URL, or Resource Title..."
@@ -60,6 +72,12 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
                         value={keyword}
                         onChange={(e) => setKeyword(e.target.value)}
                     />
+                    <button
+                        onClick={() => alert("Create Distribution not implemented yet (handled via Resource Edit)")}
+                        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"
+                    >
+                        Create New
+                    </button>
                 </div>
             </div>
 
@@ -68,22 +86,23 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
                     <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-800">
                         <thead className="bg-gray-50 dark:bg-slate-950">
                             <tr>
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">Resource ID</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">Resource Title</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">Type (Relation)</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">Label</th>
+                                <SortHeader label="Resource ID" column="resource_id" currentSort={sort} sortOrder={dir} onClick={handleSort} />
+                                <SortHeader label="Resource Title" column="dct_title_s" currentSort={sort} sortOrder={dir} onClick={handleSort} />
+                                <SortHeader label="Type (Relation)" column="relation_key" currentSort={sort} sortOrder={dir} onClick={handleSort} />
+                                <SortHeader label="Label" column="label" currentSort={sort} sortOrder={dir} onClick={handleSort} />
                                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">URL</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/50">
                             {loading ? (
-                                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">Loading...</td></tr>
+                                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">Loading...</td></tr>
                             ) : distributions.length === 0 ? (
-                                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">No distributions found.</td></tr>
+                                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">No distributions found.</td></tr>
                             ) : (
                                 distributions.map((d, i) => (
                                     <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                        <td className="px-4 py-3 text-xs font-mono text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline" onClick={() => onEditResource(d.resource_id)}>
+                                        <td className="px-4 py-3 text-xs font-mono text-slate-600 dark:text-slate-400">
                                             {d.resource_id}
                                         </td>
                                         <td className="px-4 py-3 text-xs text-slate-700 dark:text-slate-300">{d.dct_title_s || "-"}</td>
@@ -93,6 +112,14 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
                                             <a href={d.url} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline">
                                                 {d.url}
                                             </a>
+                                        </td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-xs">
+                                            <button
+                                                onClick={() => onEditResource(d.resource_id)}
+                                                className="font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline"
+                                            >
+                                                Edit
+                                            </button>
                                         </td>
                                     </tr>
                                 ))
@@ -105,7 +132,9 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
             {/* Pagination */}
             <div className="flex items-center justify-between border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 px-4 py-3">
                 <div className="text-sm text-slate-500 dark:text-slate-400">
-                    Page {page} of {totalPages || 1}
+                    Showing <span className="font-medium text-slate-900 dark:text-white">{(page - 1) * pageSize + 1}</span> to{" "}
+                    <span className="font-medium text-slate-900 dark:text-white">{Math.min(page * pageSize, total)}</span> of{" "}
+                    <span className="font-medium text-slate-900 dark:text-white">{total}</span> results
                 </div>
                 <div className="flex gap-2">
                     <button
@@ -125,5 +154,29 @@ export const DistributionsList: React.FC<DistributionsListProps> = ({ onEditReso
                 </div>
             </div>
         </div>
+    );
+};
+
+const SortHeader: React.FC<{
+    label: string;
+    column: string;
+    currentSort: string;
+    sortOrder: "asc" | "desc";
+    onClick: (col: string) => void;
+}> = ({ label, column, currentSort, sortOrder, onClick }) => {
+    return (
+        <th
+            className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors"
+            onClick={() => onClick(column)}
+        >
+            <div className="flex items-center gap-1">
+                {label}
+                {currentSort === column && (
+                    <span className="text-indigo-600 dark:text-indigo-400">
+                        {sortOrder === "asc" ? "▲" : "▼"}
+                    </span>
+                )}
+            </div>
+        </th>
     );
 };
