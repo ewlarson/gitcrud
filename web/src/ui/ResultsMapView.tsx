@@ -7,20 +7,48 @@ import { LatLngBoundsExpression } from 'leaflet';
 interface ResultsMapViewProps {
     resources: Resource[];
     onEdit: (id: string) => void;
+    highlightedResourceId?: string | null;
 }
 
 // Component to handle auto-fit bounds
-const FitBounds: React.FC<{ bounds: LatLngBoundsExpression }> = ({ bounds }) => {
+import L from 'leaflet';
+
+const FitBounds: React.FC<{ bounds: LatLngBoundsExpression[] }> = ({ bounds }) => {
     const map = useMap();
     useEffect(() => {
-        if (bounds && (bounds as any).length > 0) {
-            map.fitBounds(bounds, { padding: [20, 20] });
+        if (bounds && bounds.length > 0) {
+            const group = L.featureGroup(bounds.map(b => L.rectangle(b as any)));
+            if (group.getBounds().isValid()) {
+                map.fitBounds(group.getBounds(), { padding: [50, 50] });
+            }
         }
     }, [bounds, map]);
     return null;
 };
 
-export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdit }) => {
+const MapHighlighter: React.FC<{
+    highlightedId: string | null;
+    features: { resource: Resource; bounds: LatLngBoundsExpression }[];
+}> = ({ highlightedId, features }) => {
+    const map = useMap();
+
+    useEffect(() => {
+        if (!highlightedId) return;
+
+        const feature = features.find(f => f.resource.id === highlightedId);
+        if (feature) {
+            map.flyToBounds(feature.bounds as any, {
+                padding: [100, 100],
+                maxZoom: 8,
+                duration: 0.5
+            });
+        }
+    }, [highlightedId, features, map]);
+
+    return null;
+};
+
+export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdit, highlightedResourceId }) => {
     // Parse BBoxes
     const features = resources.map(r => {
         const bboxStr = r.dcat_bbox;
@@ -66,7 +94,7 @@ export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdi
     const allBounds = features.map(f => f.bounds);
 
     return (
-        <div className="h-full w-full min-h-[500px] bg-slate-100 dark:bg-slate-900 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-800 relative z-0">
+        <div className="h-full w-full bg-slate-100 dark:bg-slate-900 relative z-0">
             <MapContainer
                 center={[0, 0]}
                 zoom={2}
@@ -78,28 +106,36 @@ export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdi
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
                 />
 
-                {features.map(f => (
-                    <Rectangle
-                        key={f.resource.id}
-                        bounds={f.bounds}
-                        pathOptions={{ color: '#6366f1', weight: 1, fillOpacity: 0.1 }}
-                        eventHandlers={{
-                            click: () => onEdit(f.resource.id)
-                        }}
-                    >
-                        <Popup>
-                            <div className="text-xs">
-                                <strong className="block mb-1">{f.resource.dct_title_s}</strong>
-                                <span className="text-slate-500">{f.resource.id}</span>
-                                <div className="mt-2 text-indigo-600 cursor-pointer hover:underline" onClick={() => onEdit(f.resource.id)}>
-                                    Edit Record
+                {features.map(f => {
+                    const isHighlighted = f.resource.id === highlightedResourceId;
+                    return (
+                        <Rectangle
+                            key={f.resource.id}
+                            bounds={f.bounds}
+                            pathOptions={{
+                                color: isHighlighted ? '#f59e0b' : '#6366f1', // Amber if highlighted, Indigo default
+                                weight: isHighlighted ? 3 : 1,
+                                fillOpacity: isHighlighted ? 0.3 : 0.1
+                            }}
+                            eventHandlers={{
+                                click: () => onEdit(f.resource.id)
+                            }}
+                        >
+                            <Popup>
+                                <div className="text-xs">
+                                    <strong className="block mb-1">{f.resource.dct_title_s}</strong>
+                                    <span className="text-slate-500">{f.resource.id}</span>
+                                    <div className="mt-2 text-indigo-600 cursor-pointer hover:underline" onClick={() => onEdit(f.resource.id)}>
+                                        Edit Record
+                                    </div>
                                 </div>
-                            </div>
-                        </Popup>
-                    </Rectangle>
-                ))}
+                            </Popup>
+                        </Rectangle>
+                    );
+                })}
 
-                <FitBounds bounds={allBounds as any} />
+                <FitBounds bounds={allBounds} />
+                <MapHighlighter features={features} highlightedId={highlightedResourceId || null} />
             </MapContainer>
         </div>
     );

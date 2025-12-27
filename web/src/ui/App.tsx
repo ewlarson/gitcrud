@@ -291,7 +291,7 @@ export const App: React.FC = () => {
       <main className="flex-1 p-6 w-full mx-auto flex flex-col min-h-0">
         <div className="flex-1 flex flex-col min-h-0 space-y-6">
 
-          <section className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0 overflow-hidden shadow-sm dark:shadow-none backdrop-blur-sm">
+          <section className={`rounded-xl border border-gray-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/60 p-6 flex-1 flex flex-col min-h-0 shadow-sm dark:shadow-none backdrop-blur-sm ${view === 'map' ? '' : 'overflow-hidden'}`}>
             {(view === "dashboard" || view === "list" || view === "gallery" || view === "map") && (
               <div className="flex flex-col h-full -m-6">
                 <Dashboard

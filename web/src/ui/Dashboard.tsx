@@ -46,6 +46,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
     const [loading, setLoading] = useState(true);
     const [isExporting, setIsExporting] = useState(false);
     const [modalState, setModalState] = useState<{ field: string; label: string } | null>(null);
+    const [hoveredResourceId, setHoveredResourceId] = useState<string | null>(null);
 
     // Asset Queues
     const { thumbnails, register } = useThumbnailQueue();
@@ -477,19 +478,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 </div>
 
                 {/* Results Grid/List/Map */}
-                <div className={`flex-1 overflow-y-auto ${state.view === 'map' ? 'p-0' : 'p-4'}`}>
-                    {loading ? (
-                        <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
-                    ) : (
-                        state.view === 'map' ? (
-                            <ResultsMapView resources={resources} onEdit={onEdit} />
+                {/* Results Grid/List/Map */}
+                {state.view === 'map' ? (
+                    <div className="flex-1 flex items-start">
+                        {/* Condensed List Column */}
+                        <div className="w-[32rem] flex-shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 pb-20">
+                            {loading ? (
+                                <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
+                            ) : (
+                                <ul className="divide-y divide-gray-100 dark:divide-slate-800">
+                                    {resources.map(r => (
+                                        <li
+                                            key={r.id}
+                                            className="p-3 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer"
+                                            onMouseEnter={() => setHoveredResourceId(r.id)}
+                                            onMouseLeave={() => setHoveredResourceId(null)}
+                                        >
+                                            <div className="flex gap-3">
+                                                {/* Thumbnail */}
+                                                <div className="w-16 h-16 flex-shrink-0 bg-gray-100 dark:bg-slate-800 rounded overflow-hidden relative border border-gray-200 dark:border-slate-700">
+                                                    {thumbnails[r.id] ? (
+                                                        <img src={thumbnails[r.id] || undefined} alt="" className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <div className="flex items-center justify-center h-full text-slate-300 dark:text-slate-600">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6">
+                                                                <path fillRule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909.47.47a.75.75 0 11-1.06 1.06L6.53 8.091a.75.75 0 00-1.06 0l-2.97 2.97z" clipRule="evenodd" />
+                                                            </svg>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {/* Meta */}
+                                                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                                    <h4 className="text-sm font-medium text-slate-900 dark:text-white truncate" title={r.dct_title_s}>
+                                                        {r.dct_title_s}
+                                                    </h4>
+                                                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                                                        <span>{r.gbl_indexYear_im || "n.d."}</span>
+                                                        <button onClick={() => onEdit(r.id)} className="opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-500 font-medium">Edit</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                        {/* Map Column */}
+                        <div className="flex-1 sticky top-20 h-[calc(100vh-6rem)]">
+                            {loading ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-gray-50/50 dark:bg-slate-900/50 backdrop-blur-sm z-10">Loading...</div>
+                            ) : (
+                                <ResultsMapView resources={resources} onEdit={onEdit} highlightedResourceId={hoveredResourceId} />
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {loading ? (
+                            <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
                         ) : state.view === 'gallery' ? (
                             <GalleryView resources={resources} thumbnails={thumbnails} onEdit={onEdit} />
                         ) : (
                             <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onEdit={onEdit} page={page} />
-                        )
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Pagination */}
                 {totalPages > 1 && (
