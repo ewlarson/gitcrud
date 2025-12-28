@@ -6,11 +6,12 @@ interface DashboardResultsListProps {
     thumbnails: Record<string, string | null>;
     mapUrls: Record<string, string | null>;
     onEdit: (id: string) => void;
+    onSelect?: (id: string) => void;
     page: number;
     pageSize?: number;
 }
 
-export const DashboardResultsList: React.FC<DashboardResultsListProps> = ({ resources, thumbnails, mapUrls, onEdit, page = 1, pageSize = 20 }) => {
+export const DashboardResultsList: React.FC<DashboardResultsListProps> = ({ resources, thumbnails, mapUrls, onEdit, onSelect, page = 1, pageSize = 20 }) => {
     return (
         <div className="space-y-4">
             {resources.map((r, index) => (
@@ -40,7 +41,7 @@ export const DashboardResultsList: React.FC<DashboardResultsListProps> = ({ reso
                         <div className="min-w-0 flex flex-col justify-between h-full">
                             <div>
                                 <h3 className="text-lg font-medium text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">
-                                    <button onClick={() => onEdit(r.id)} className="text-left focus:outline-none hover:underline">
+                                    <button onClick={() => onSelect?.(r.id)} className="text-left focus:outline-none hover:underline">
                                         {r.dct_title_s || "Untitled"}
                                     </button>
                                 </h3>

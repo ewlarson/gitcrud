@@ -1,0 +1,371 @@
+import React, { useEffect, useState } from 'react';
+import { Resource } from '../aardvark/model';
+import { queryResourceById, querySimilarResources, ensureEmbeddings } from '../duckdb/duckdbClient';
+import { MapContainer, TileLayer, Rectangle } from 'react-leaflet';
+import { Link } from './Link';
+import 'leaflet/dist/leaflet.css';
+import { LatLngBoundsExpression } from 'leaflet';
+
+interface ResourceShowProps {
+    id: string;
+    onBack?: () => void;
+}
+
+const CopyButton: React.FC<{ text: string }> = ({ text }) => {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <button
+            onClick={handleCopy}
+            className="flex-shrink-0 p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 bg-gray-50 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 border border-gray-200 dark:border-slate-700 rounded transition-colors"
+            title="Copy to clipboard"
+        >
+            {copied ? (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-emerald-500">
+                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                </svg>
+            ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                    <path fillRule="evenodd" d="M15.988 3.012A2.25 2.25 0 0118 5.25v6.5A2.25 2.25 0 0115.75 14H13.5V7A2.5 2.5 0 0011 4.5H8.128a2.252 2.252 0 011.884-1.488A2.25 2.25 0 0112.25 1h1.5a2.25 2.25 0 012.238 2.012zM11.5 3.25a.75.75 0 01.75-.75h1.5a.75.75 0 01.75.75v.25h-3v-.25z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M2 7a1 1 0 011-1h8a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V7zm2 3.25a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5a.75.75 0 01-.75-.75zm0 3.5a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5a.75.75 0 01-.75-.75z" clipRule="evenodd" />
+                </svg>
+            )}
+        </button>
+    );
+};
+
+export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
+    const [resource, setResource] = useState<Resource | null>(null);
+    const [similarResources, setSimilarResources] = useState<Resource[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const load = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const r = await queryResourceById(id);
+                setResource(r);
+
+                if (r) {
+                    // Fetch similar resources (Metadata Overlap)
+                    querySimilarResources(id).then(setSimilarResources);
+                }
+            } catch (e) {
+                setError("Failed to load resource");
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+    }, [id]);
+
+    if (loading) {
+        return <div className="p-8 text-center text-slate-500">Loading resource...</div>;
+    }
+
+    if (!resource) {
+        return <div className="p-8 text-center text-red-500">Resource not found: {id}</div>;
+    }
+
+    // Parse Bounds for Mini Map
+    let bounds: LatLngBoundsExpression | null = null;
+    if (resource.dcat_bbox) {
+        const bboxStr = resource.dcat_bbox;
+        // Try ENVELOPE(minX, maxX, maxY, minY)
+        const envelopeMatch = bboxStr.match(/ENVELOPE\s*\(\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\)/i);
+        if (envelopeMatch) {
+            const minX = parseFloat(envelopeMatch[1]);
+            const maxX = parseFloat(envelopeMatch[2]);
+            const maxY = parseFloat(envelopeMatch[3]);
+            const minY = parseFloat(envelopeMatch[4]);
+            bounds = [[minY, minX], [maxY, maxX]];
+        } else {
+            const parts = bboxStr.split(',').map(s => parseFloat(s.trim()));
+            if (parts.length === 4 && parts.every(n => !isNaN(n))) {
+                bounds = [[parts[1], parts[0]], [parts[3], parts[2]]];
+            }
+        }
+    }
+
+    const breadcrumbs = [
+        ...(resource.gbl_resourceClass_sm || []),
+        ...(resource.gbl_resourceType_sm || []),
+        ...(resource.dct_spatial_sm || [])
+    ].slice(0, 4).join(" > ");
+
+    const downloadLink = resource.dct_references_s ? (() => {
+        try {
+            const refs = JSON.parse(resource.dct_references_s);
+            return refs["http://schema.org/downloadUrl"] || refs["http://schema.org/url"];
+        } catch { return null; }
+    })() : null;
+
+    return (
+        <div className="max-w-7xl mx-auto w-full bg-white dark:bg-slate-900 min-h-full">
+            {/* Header / Breadcrumb */}
+            <div className="border-b border-gray-200 dark:border-slate-800 p-6">
+                <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-2">
+                    <button onClick={onBack} className="hover:text-indigo-600 dark:hover:text-indigo-400">
+                        Home
+                    </button>
+                    <span>/</span>
+                    <span className="truncate max-w-2xl">{breadcrumbs || "Resource"}</span>
+                </div>
+                <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{resource.dct_title_s}</h1>
+                <div className="flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-400">
+                    {resource.dct_publisher_sm?.[0] && (
+                        <span>{resource.dct_publisher_sm[0]}</span>
+                    )}
+                    {resource.gbl_indexYear_im && (
+                        <span>&middot; {resource.gbl_indexYear_im}</span>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex flex-col lg:flex-row">
+                {/* Main Content: Metadata */}
+                <div className="flex-1 p-6 border-r border-gray-200 dark:border-slate-800">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">Full Details</h2>
+
+                    <dl className="grid grid-cols-[160px_1fr] gap-y-4 text-sm">
+                        {Object.entries(resource).map(([key, value]) => {
+                            if (!value || (Array.isArray(value) && value.length === 0) || key === 'id' || key.startsWith('_')) return null;
+                            // Basic label formatting
+                            const label = key.replace(/^[a-z]+_/, '').replace(/_[a-z]+$/, '').replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+
+                            return (
+                                <React.Fragment key={key}>
+                                    <dt className="font-medium text-slate-500 dark:text-slate-400">{label}</dt>
+                                    <dd className="text-slate-900 dark:text-slate-200 break-words">
+                                        {Array.isArray(value) ? value.join(", ") : String(value)}
+                                    </dd>
+                                </React.Fragment>
+                            );
+                        })}
+                    </dl>
+                </div>
+
+                {/* Sidebar */}
+                <div className="w-full lg:w-96 p-6 flex flex-col gap-6 bg-gray-50 dark:bg-slate-900/50">
+                    {/* Location Map */}
+                    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+                        <div className="p-3 border-b border-gray-200 dark:border-slate-700 font-semibold text-sm">Location</div>
+                        <div className="h-64 relative z-0">
+                            {bounds ? (
+                                <MapContainer bounds={bounds as any} className="h-full w-full" scrollWheelZoom={false} dragging={false} zoomControl={false} doubleClickZoom={false}>
+                                    <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
+                                    <Rectangle bounds={bounds} pathOptions={{ color: '#3b82f6', weight: 1, fillOpacity: 0.2 }} />
+                                </MapContainer>
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-slate-400 text-sm">No map extent available</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Downloads */}
+                    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+                        <div className="p-3 border-b border-gray-200 dark:border-slate-700 font-semibold text-sm">Downloads</div>
+                        <div className="p-4">
+                            {downloadLink ? (
+                                <a
+                                    href={downloadLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block w-full text-center bg-indigo-600 hover:bg-indigo-700 text-white rounded py-2 text-sm font-medium transition-colors"
+                                >
+                                    Download Resource
+                                </a>
+                            ) : (
+                                <span className="text-sm text-slate-500">No direct download available.</span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Cite & Reference */}
+                    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+                        <div className="p-3 border-b border-gray-200 dark:border-slate-700 font-semibold text-sm">Cite & Reference</div>
+                        <div className="p-4 space-y-4">
+                            {/* Citation */}
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Citation</label>
+                                <div className="flex gap-2">
+                                    <div className="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded p-2 text-xs text-slate-700 dark:text-slate-300 break-words font-mono">
+                                        {(() => {
+                                            const parts = [];
+                                            // Author
+                                            if (resource.dct_creator_sm && resource.dct_creator_sm.length > 0) {
+                                                parts.push(resource.dct_creator_sm.join(", "));
+                                            }
+                                            // Date
+                                            const date = resource.gbl_indexYear_im ? `(${resource.gbl_indexYear_im})` : "(n.d.)";
+                                            parts.push(date);
+                                            // Title
+                                            parts.push(resource.dct_title_s);
+                                            // Publisher
+                                            if (resource.dct_publisher_sm && resource.dct_publisher_sm.length > 0) {
+                                                parts.push(resource.dct_publisher_sm.join(", "));
+                                            }
+                                            // URL
+                                            parts.push(window.location.href);
+
+                                            return parts.join(". ") + ".";
+                                        })()}
+                                    </div>
+                                    <CopyButton text={(() => {
+                                        const parts = [];
+                                        if (resource.dct_creator_sm && resource.dct_creator_sm.length > 0) parts.push(resource.dct_creator_sm.join(", "));
+                                        const date = resource.gbl_indexYear_im ? `(${resource.gbl_indexYear_im})` : "(n.d.)";
+                                        parts.push(date);
+                                        parts.push(resource.dct_title_s);
+                                        if (resource.dct_publisher_sm && resource.dct_publisher_sm.length > 0) parts.push(resource.dct_publisher_sm.join(", "));
+                                        parts.push(window.location.href);
+                                        return parts.join(". ") + ".";
+                                    })()} />
+                                </div>
+                            </div>
+
+                            {/* Share Link */}
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Share Link</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        readOnly
+                                        value={window.location.href}
+                                        className="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded p-2 text-xs text-slate-700 dark:text-slate-300 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                        onClick={(e) => e.currentTarget.select()}
+                                    />
+                                    <CopyButton text={window.location.href} />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Similar Items Carousel */}
+            {similarResources.length > 0 && (
+                <div className="mt-12 mb-8 px-6 pb-6">
+                    <h2 className="text-2xl font-bold mb-6 text-slate-900 dark:text-gray-100">Similar Items</h2>
+                    <Carousel items={similarResources} />
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ITEMS_PER_PAGE = 4;
+
+const Carousel: React.FC<{ items: Resource[] }> = ({ items }) => {
+    const [currentPage, setCurrentPage] = useState(0);
+    const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+
+    const handlePrev = () => {
+        setCurrentPage(p => Math.max(0, p - 1));
+    };
+
+    const handleNext = () => {
+        setCurrentPage(p => Math.min(totalPages - 1, p + 1));
+    };
+
+    const currentItems = items.slice(currentPage * ITEMS_PER_PAGE, (currentPage + 1) * ITEMS_PER_PAGE);
+
+    if (items.length === 0) return null;
+
+    return (
+        <div className="relative group">
+            {/* Grid for items */}
+            <div className="grid grid-cols-4 gap-6 mb-6">
+                {currentItems.map((item) => (
+                    <Link
+                        key={item.id}
+                        href={`/resources/${item.id}`}
+                        className="group/card focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-lg"
+                    >
+                        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-200 dark:border-slate-700 h-full flex flex-col overflow-hidden">
+                            {/* Thumbnail */}
+                            <div className="h-40 bg-gray-100 dark:bg-slate-700 overflow-hidden relative">
+                                {item.thumbnail ? (
+                                    <img
+                                        src={item.thumbnail}
+                                        alt=""
+                                        className="w-full h-full object-cover transition-transform duration-500 group-hover/card:scale-105"
+                                        loading="lazy"
+                                    />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                        <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Content */}
+                            <div className="p-4 flex-1 flex flex-col">
+                                <h3 className="text-sm font-semibold text-slate-900 dark:text-gray-100 line-clamp-2 mb-2 group-hover/card:text-indigo-600 dark:group-hover/card:text-indigo-400">
+                                    {item.dct_title_s}
+                                </h3>
+                                <div className="mt-auto text-xs text-slate-500 dark:text-slate-400">
+                                    {item.dct_publisher_sm?.[0] || 'Unknown Publisher'}
+                                    <span className="mx-1">&middot;</span>
+                                    {item.gbl_indexYear_im || 'n.d.'}
+                                </div>
+                            </div>
+                        </div>
+                    </Link>
+                ))}
+            </div>
+
+            {/* Controls */}
+            {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-4">
+                    <button
+                        onClick={handlePrev}
+                        disabled={currentPage === 0}
+                        className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        aria-label="Previous page"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-slate-600 dark:text-slate-400">
+                            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+
+                    <div className="flex gap-2">
+                        {Array.from({ length: totalPages }).map((_, i) => (
+                            <button
+                                key={i}
+                                onClick={() => setCurrentPage(i)}
+                                className={`w-2 h-2 rounded-full transition-colors ${i === currentPage
+                                        ? 'bg-indigo-600 dark:bg-indigo-400'
+                                        : 'bg-gray-300 dark:bg-slate-700 hover:bg-gray-400 dark:hover:bg-slate-600'
+                                    }`}
+                                aria-label={`Go to page ${i + 1}`}
+                                aria-current={i === currentPage ? 'page' : undefined}
+                            />
+                        ))}
+                    </div>
+
+                    <button
+                        onClick={handleNext}
+                        disabled={currentPage === totalPages - 1}
+                        className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        aria-label="Next page"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-slate-600 dark:text-slate-400">
+                            <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+};

@@ -11,6 +11,7 @@ export interface Resource {
   dct_accessRights_s: string;
   dct_format_s?: string | null;
   gbl_mdVersion_s: string; // should always be "Aardvark"
+  dct_references_s?: string; // JSON string of references
 
   // Identification
   dct_alternative_sm: string[];

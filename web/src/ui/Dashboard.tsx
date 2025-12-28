@@ -23,6 +23,7 @@ interface DashboardProps {
     project: ProjectConfig | null;
     onEdit: (id: string) => void;
     onCreate: () => void;
+    onSelect?: (id: string) => void;
 }
 
 const FACETS = [
@@ -39,7 +40,7 @@ const FACETS = [
     { field: "gbl_georeferenced_b", label: "Georeferenced", limit: 5 },
 ];
 
-export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate, onSelect }) => {
     const [resources, setResources] = useState<Resource[]>([]);
     const [facetsData, setFacetsData] = useState<Record<string, { value: string; count: number }[]>>({});
     const [total, setTotal] = useState(0);
@@ -89,7 +90,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                 }
                 return params;
             },
-            fromUrl: (params) => {
+            fromUrl: (params, _pathname) => {
                 const q = params.get("q") || "";
                 const page = Number(params.get("page")) || 1;
                 const sort = params.get("sort") || "relevance";
@@ -493,6 +494,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                                             className="p-3 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer"
                                             onMouseEnter={() => setHoveredResourceId(r.id)}
                                             onMouseLeave={() => setHoveredResourceId(null)}
+                                            onClick={() => onSelect?.(r.id)}
                                         >
                                             <div className="flex gap-3">
                                                 {/* Thumbnail */}
@@ -514,7 +516,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                                                     </h4>
                                                     <div className="mt-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                                                         <span>{r.gbl_indexYear_im || "n.d."}</span>
-                                                        <button onClick={() => onEdit(r.id)} className="opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-500 font-medium">Edit</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -528,7 +529,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                             {loading ? (
                                 <div className="absolute inset-0 flex items-center justify-center bg-gray-50/50 dark:bg-slate-900/50 backdrop-blur-sm z-10">Loading...</div>
                             ) : (
-                                <ResultsMapView resources={resources} onEdit={onEdit} highlightedResourceId={hoveredResourceId} />
+                                <ResultsMapView resources={resources} onEdit={onEdit} onSelect={onSelect} highlightedResourceId={hoveredResourceId} />
                             )}
                         </div>
                     </div>
@@ -537,9 +538,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate 
                         {loading ? (
                             <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
                         ) : state.view === 'gallery' ? (
-                            <GalleryView resources={resources} thumbnails={thumbnails} onEdit={onEdit} />
+                            <GalleryView resources={resources} thumbnails={thumbnails} onEdit={onEdit} onSelect={onSelect} />
                         ) : (
-                            <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onEdit={onEdit} page={page} />
+                            <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onEdit={onEdit} onSelect={onSelect} page={page} />
                         )}
                     </div>
                 )}

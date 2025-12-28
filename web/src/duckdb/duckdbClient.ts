@@ -5,6 +5,7 @@ import workerUrl from "@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url"
 import wasmUrl from "@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url";
 import mvpWorkerUrl from "@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url";
 import mvpWasmUrl from "@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url";
+import embeddingWorkerUrl from "../workers/embedding.worker?worker&url";
 
 import JSZip from "jszip";
 
@@ -133,10 +134,13 @@ async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
   const scalarCols = SCALAR_FIELDS.map(f => `"${f}" VARCHAR`).join(", ");
   // Add GEOMETRY column for DuckDB Spatial
   // Note: We use 'geom' as the column name.
-  await conn.query(`CREATE TABLE IF NOT EXISTS resources (${scalarCols}, geom GEOMETRY)`);
+  // Add embedding column for Vector Search
+  await conn.query(`CREATE TABLE IF NOT EXISTS resources (${scalarCols}, geom GEOMETRY, embedding FLOAT[])`);
 
   // Ensure geom column exists (migration)
   try { await conn.query(`ALTER TABLE resources ADD COLUMN geom GEOMETRY`); } catch { }
+  // Ensure embedding column exists (migration)
+  try { await conn.query(`ALTER TABLE resources ADD COLUMN embedding FLOAT[]`); } catch { }
 
   // resources_mv (multivalue)
   await conn.query(`CREATE TABLE IF NOT EXISTS resources_mv (id VARCHAR, field VARCHAR, val VARCHAR)`);
@@ -713,6 +717,166 @@ export async function queryResourceById(id: string): Promise<Resource | null> {
   }
 
   return resourceFromRow(r, dists);
+}
+
+// *** Vector Embedding Engine ***
+
+interface EmbeddingTask {
+  id: string;
+  text: string;
+}
+
+let embeddingWorker: Worker | null = null;
+const embeddingCallbacks = new Map<string, (success: boolean) => void>();
+
+function getEmbeddingWorker(): Worker {
+  if (!embeddingWorker) {
+    embeddingWorker = new Worker(embeddingWorkerUrl, { type: "module" });
+    embeddingWorker.onmessage = async (e: MessageEvent) => {
+      const { id, embedding, success, error } = e.data;
+
+      // Update DB
+      if (success && embedding) {
+        try {
+          const ctx = await getDuckDbContext();
+          if (ctx) {
+            // DuckDB FLOAT[] literal format: [1.0, 2.0, 3.0]
+            // We need to construct the SQL explicitly or use prepared statement params?
+            // DuckDB-WASM prepared statements with arrays can be tricky.
+            // Let's try explicit string construction for safety first, or use the `?` if supported for arrays.
+            // Using string interpolation for FLOAT[]: `[${embedding.join(',')}]`
+            await ctx.conn.query(`UPDATE resources SET embedding = [${embedding.join(',')}] WHERE id = '${id.replace(/'/g, "''")}'`);
+          }
+        } catch (dbErr) {
+          console.error("Failed to save embedding for " + id, dbErr);
+        }
+      } else {
+        console.warn(`Embedding failed for ${id}:`, error);
+      }
+
+      // Resolve queue
+      const cb = embeddingCallbacks.get(id);
+      if (cb) {
+        cb(success);
+        embeddingCallbacks.delete(id);
+      }
+    };
+  }
+  return embeddingWorker;
+}
+
+export async function ensureEmbeddings(priorityId?: string): Promise<void> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return;
+  const { conn } = ctx;
+
+  let idsToProcess: string[] = [];
+  let priorityPromise: Promise<void> | null = null;
+
+  // 1. Check priorityId
+  if (priorityId) {
+    const safePriorityId = priorityId.replace(/'/g, "''");
+    const check = await conn.query(`SELECT id FROM resources WHERE id = '${safePriorityId}' AND embedding IS NULL`);
+    if (check.numRows > 0) {
+      idsToProcess.push(priorityId);
+      // Register callback to await completion
+      priorityPromise = new Promise((resolve) => {
+        // The worker calls callback(success: boolean)
+        embeddingCallbacks.set(priorityId, (_success) => resolve());
+      });
+    }
+  }
+
+  // 2. Fill batch (reduced for verification from 50 to 5)
+  const batchSize = 5;
+  const limit = batchSize - idsToProcess.length;
+
+  if (limit > 0) {
+    // Exclude priorityId if already added
+    const where = priorityId ? `AND id != '${priorityId.replace(/'/g, "''")}'` : "";
+    const res = await conn.query(`SELECT id FROM resources WHERE embedding IS NULL ${where} LIMIT ${limit}`);
+    const otherIds = res.toArray().map((r: any) => r.id);
+    idsToProcess.push(...otherIds);
+  }
+
+  if (idsToProcess.length === 0) return;
+
+  console.log(`Generating embeddings for ${idsToProcess.length} resources...`);
+
+  // 3. Fetch data to construct text
+  const resources = await fetchResourcesByIds(conn, idsToProcess);
+
+  // 4. Queue worker tasks
+  const worker = getEmbeddingWorker();
+
+  for (const r of resources) {
+    const textPieces = [
+      `Title: ${r.dct_title_s || ''}`,
+      `Alternative Title: ${(r.dct_alternative_sm || []).join(', ')}`,
+      `Description: ${(r.dct_description_sm || []).join(' ')}`,
+      `Subjects: ${(r.dct_subject_sm || []).join(', ')}`,
+      `Keywords: ${(r.dcat_keyword_sm || []).join(', ')}`,
+      `Themes: ${(r.dcat_theme_sm || []).join(', ')}`,
+      `Creators: ${(r.dct_creator_sm || []).join(', ')}`,
+      `Publisher: ${(r.dct_publisher_sm || []).join(', ')}`,
+      `Language: ${(r.dct_language_sm || []).join(', ')}`,
+      `Resource Class: ${(r.gbl_resourceClass_sm || []).join(', ')}`,
+      `Resource Type: ${(r.gbl_resourceType_sm || []).join(', ')}`,
+      `Place: ${(r.dct_spatial_sm || []).join(', ')}`,
+      `Year: ${r.gbl_indexYear_im || ''}`
+    ];
+
+    // Clean and join
+    const text = textPieces.map(s => s.trim()).filter(s => !s.endsWith(':')).join('. ');
+
+    worker.postMessage({ id: r.id, text });
+  }
+
+  // 5. Wait for priority item if requested
+  if (priorityPromise) {
+    await priorityPromise;
+  }
+}
+
+export async function querySimilarResources(id: string, limit: number = 12): Promise<Resource[]> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return [];
+  const { conn } = ctx;
+
+  const safeId = id.replace(/'/g, "''");
+
+  // Metadata Overlap Query
+  // Matches shared values in specific multi-value fields.
+  const sql = `
+    SELECT m.id, SUM(weight) as score
+    FROM resources_mv m
+    JOIN (
+      SELECT field, val, CASE 
+        WHEN field='dct_subject_sm' THEN 3 
+        WHEN field='dct_creator_sm' THEN 2 
+        WHEN field='dcat_theme_sm' THEN 2 
+        WHEN field='dct_spatial_sm' THEN 1 
+        WHEN field='gbl_resourceClass_sm' THEN 1 
+        ELSE 1 END as weight
+      FROM resources_mv 
+      WHERE id = '${safeId}'
+      AND field IN ('dct_subject_sm', 'dct_creator_sm', 'dcat_theme_sm', 'dct_spatial_sm', 'gbl_resourceClass_sm')
+    ) target
+    ON m.field = target.field AND m.val = target.val
+    WHERE m.id != '${safeId}'
+    GROUP BY m.id
+    ORDER BY score DESC
+    LIMIT ${limit}
+  `;
+
+  try {
+    const similarRes = await conn.query(sql);
+    const similarIds = similarRes.toArray().map((r: any) => r.id);
+    return fetchResourcesByIds(conn, similarIds);
+  } catch (e) {
+    console.warn("Similarity query failed", e);
+    return [];
+  }
 }
 
 // *** Import Function ***

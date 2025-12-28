@@ -5,9 +5,10 @@ interface GalleryViewProps {
     resources: Resource[];
     thumbnails: Record<string, string | null>;
     onEdit: (id: string) => void;
+    onSelect?: (id: string) => void;
 }
 
-export const GalleryView: React.FC<GalleryViewProps> = ({ resources, thumbnails, onEdit }) => {
+export const GalleryView: React.FC<GalleryViewProps> = ({ resources, thumbnails, onEdit, onSelect }) => {
     if (resources.length === 0) {
         return (
             <div className="flex h-64 items-center justify-center text-slate-500">
@@ -22,7 +23,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({ resources, thumbnails,
                 <div
                     key={r.id}
                     className="group relative bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg overflow-hidden hover:shadow-md transition-shadow cursor-pointer flex flex-col"
-                    onClick={() => onEdit(r.id)}
+                    onClick={() => onSelect?.(r.id)}
                 >
                     {/* Thumbnail Aspect Ratio 1:1 or 4:3? Aardvark usually squares. */}
                     <div className="aspect-square bg-gray-100 dark:bg-slate-950 flex items-center justify-center overflow-hidden relative">

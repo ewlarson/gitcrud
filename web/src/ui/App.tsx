@@ -12,6 +12,7 @@ import { Dashboard } from "./Dashboard";
 import { useUrlState } from "../hooks/useUrlState";
 import { AutosuggestInput } from "./AutosuggestInput";
 import { ThemeToggle } from "./ThemeToggle";
+import { ResourceShow } from "./ResourceShow";
 
 
 export const App: React.FC = () => {
@@ -19,7 +20,7 @@ export const App: React.FC = () => {
   const [resourceCount, setResourceCount] = useState<number>(0);
 
   // URL State
-  type ViewType = "dashboard" | "admin" | "edit" | "create" | "import" | "distributions" | "list" | "gallery" | "map";
+  type ViewType = "dashboard" | "admin" | "edit" | "create" | "import" | "distributions" | "list" | "gallery" | "map" | "resource";
   interface AppState {
     view: ViewType;
     id?: string;
@@ -30,11 +31,17 @@ export const App: React.FC = () => {
     {
       toUrl: (s) => {
         const p = new URLSearchParams();
-        if (s.view !== "dashboard") p.set("view", s.view);
-        if (s.id) p.set("id", s.id);
+        if (s.view !== "dashboard" && s.view !== "resource") p.set("view", s.view);
+        if (s.id && s.view !== "resource") p.set("id", s.id);
         return p;
       },
-      fromUrl: (p) => {
+      fromUrl: (p, pathname) => {
+        // Check for /resources/:id
+        const resourceMatch = pathname.match(/^\/resources\/([^/]+)$/);
+        if (resourceMatch) {
+          return { view: "resource", id: decodeURIComponent(resourceMatch[1]) };
+        }
+
         const view = (p.get("view") as ViewType) || "dashboard";
         const id = p.get("id") || undefined;
         return { view, id };
@@ -42,6 +49,12 @@ export const App: React.FC = () => {
       cleanup: (p) => {
         p.delete("view");
         p.delete("id");
+      },
+      path: (s) => {
+        if (s.view === "resource" && s.id) {
+          return `/resources/${encodeURIComponent(s.id)}`;
+        }
+        return "/";
       }
     }
   );
@@ -298,6 +311,16 @@ export const App: React.FC = () => {
                   project={null}
                   onEdit={handleEditResource}
                   onCreate={() => handleCreate(true)}
+                  onSelect={(id) => setUrlState({ view: 'resource', id })}
+                />
+              </div>
+            )}
+
+            {view === "resource" && selectedId && (
+              <div className="-m-6 h-[calc(100%+3rem)]">
+                <ResourceShow
+                  id={selectedId}
+                  onBack={() => setUrlState({ view: 'dashboard' })}
                 />
               </div>
             )}

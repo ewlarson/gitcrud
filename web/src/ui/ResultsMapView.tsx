@@ -7,6 +7,7 @@ import { LatLngBoundsExpression } from 'leaflet';
 interface ResultsMapViewProps {
     resources: Resource[];
     onEdit: (id: string) => void;
+    onSelect?: (id: string) => void;
     highlightedResourceId?: string | null;
 }
 
@@ -48,7 +49,7 @@ const MapHighlighter: React.FC<{
     return null;
 };
 
-export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdit, highlightedResourceId }) => {
+export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdit, onSelect, highlightedResourceId }) => {
     // Parse BBoxes
     const features = resources.map(r => {
         const bboxStr = r.dcat_bbox;
@@ -118,7 +119,7 @@ export const ResultsMapView: React.FC<ResultsMapViewProps> = ({ resources, onEdi
                                 fillOpacity: isHighlighted ? 0.3 : 0.1
                             }}
                             eventHandlers={{
-                                click: () => onEdit(f.resource.id)
+                                click: () => onSelect?.(f.resource.id)
                             }}
                         >
                             <Popup>
