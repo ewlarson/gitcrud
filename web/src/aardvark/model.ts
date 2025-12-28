@@ -273,6 +273,7 @@ export function resourceFromJson(raw: AardvarkJson): Resource {
     gbl_suppressed_b: (raw["gbl_suppressed_b"] as boolean | undefined) ?? null,
 
     gbl_fileSize_s: (raw["gbl_fileSize_s"] as string | undefined) ?? null,
+    dct_references_s: (raw["dct_references_s"] as string | undefined),
 
     pcdm_memberOf_sm: (raw["pcdm_memberOf_sm"] as string[] | undefined) ?? [],
     dct_isPartOf_sm: (raw["dct_isPartOf_sm"] as string[] | undefined) ?? [],
@@ -360,6 +361,7 @@ export function resourceToJson(resource: Resource): AardvarkJson {
   if (resource.gbl_wxsIdentifier_s) base["gbl_wxsIdentifier_s"] = resource.gbl_wxsIdentifier_s;
   if (resource.gbl_suppressed_b !== null && resource.gbl_suppressed_b !== undefined) base["gbl_suppressed_b"] = resource.gbl_suppressed_b;
   if (resource.gbl_fileSize_s) base["gbl_fileSize_s"] = resource.gbl_fileSize_s;
+  if (resource.dct_references_s) base["dct_references_s"] = resource.dct_references_s;
 
 
   for (const [k, v] of Object.entries(resource.extra)) {

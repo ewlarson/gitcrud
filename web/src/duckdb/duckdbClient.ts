@@ -132,21 +132,22 @@ async function createDB(wUrl: string, waUrl: string): Promise<duckdb.AsyncDuckDB
 async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
   // resources table (scalars)
   const scalarCols = SCALAR_FIELDS.map(f => `"${f}" VARCHAR`).join(", ");
-  // Add GEOMETRY column for DuckDB Spatial
-  // Note: We use 'geom' as the column name.
-  // Add embedding column for Vector Search
   await conn.query(`CREATE TABLE IF NOT EXISTS resources (${scalarCols}, geom GEOMETRY, embedding FLOAT[])`);
 
   // Ensure geom column exists (migration)
-  try { await conn.query(`ALTER TABLE resources ADD COLUMN geom GEOMETRY`); } catch { }
-  // Ensure embedding column exists (migration)
-  try { await conn.query(`ALTER TABLE resources ADD COLUMN embedding FLOAT[]`); } catch { }
+  const resInfo = await conn.query(`DESCRIBE resources`);
+  const resCols = resInfo.toArray().map((r: any) => r.column_name);
+  if (!resCols.includes('geom')) {
+    await conn.query(`ALTER TABLE resources ADD COLUMN geom GEOMETRY`);
+  }
+  if (!resCols.includes('embedding')) {
+    await conn.query(`ALTER TABLE resources ADD COLUMN embedding FLOAT[]`);
+  }
 
   // resources_mv (multivalue)
   await conn.query(`CREATE TABLE IF NOT EXISTS resources_mv (id VARCHAR, field VARCHAR, val VARCHAR)`);
 
   // Backfill GEOMETRY from dcat_bbox if missing
-  // This ensures existing data is indexed without re-import
   try {
     const needsBackfill = await conn.query("SELECT count(*) as c FROM resources WHERE geom IS NULL AND dcat_bbox LIKE 'ENVELOPE(%'");
     if (Number(needsBackfill.toArray()[0].c) > 0) {
@@ -171,7 +172,11 @@ async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
   await conn.query(`CREATE TABLE IF NOT EXISTS distributions (resource_id VARCHAR, relation_key VARCHAR, url VARCHAR, label VARCHAR)`);
 
   // Ensure label column exists (migration)
-  try { await conn.query(`ALTER TABLE distributions ADD COLUMN label VARCHAR`); } catch { }
+  const distInfo = await conn.query(`DESCRIBE distributions`);
+  const distCols = distInfo.toArray().map((r: any) => r.column_name);
+  if (!distCols.includes('label')) {
+    await conn.query(`ALTER TABLE distributions ADD COLUMN label VARCHAR`);
+  }
 
   // resources_image_service (Thumbnail Cache)
   try {
@@ -199,7 +204,8 @@ async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
 
   // search_index (FTS)
   await conn.query(`CREATE TABLE IF NOT EXISTS search_index (id VARCHAR, content VARCHAR)`);
-  try { await conn.query(`PRAGMA create_fts_index('search_index', 'id', 'content')`); } catch { }
+  // Try to create index, use overwrite=1 to avoid error if exists
+  await conn.query(`PRAGMA create_fts_index('search_index', 'id', 'content', overwrite=1)`);
 }
 
 export async function zipResources(resources: Resource[]): Promise<Blob> {
@@ -1780,6 +1786,88 @@ export async function hasStaticMap(id: string): Promise<boolean> {
 export interface SuggestResult {
   text: string;
   type: string;
+}
+
+
+export async function getSearchNeighbors(req: FacetedSearchRequest, currentId: string): Promise<{ prevId?: string, nextId?: string, position: number, total: number }> {
+  const ctx = await getDuckDbContext();
+  if (!ctx) return { position: 0, total: 0 };
+  const { conn } = ctx;
+
+  const sort = req.sort?.[0] ?? { field: "dct_title_s", dir: "asc" };
+  const safeId = currentId.replace(/'/g, "''");
+
+  // Use full WHERE clause including global Q/BBox
+  const { sql: where } = compileFacetedWhere(req, null, true);
+
+  // Replicate Sort Logic matching facetedSearch
+  // Note: We use "resources." prefix to ensure ambiguity resolution in joins/CTEs
+  let orderBy = `resources."dct_title_s" ASC`;
+  let spatialScore = "";
+
+  if (req.bbox) {
+    const { minX, minY, maxX, maxY } = req.bbox;
+    const bboxEnv = `ST_MakeEnvelope(${minX}, ${minY}, ${maxX}, ${maxY})`;
+    // IoU Calculation
+    spatialScore = `
+         (ST_Area(ST_Intersection(resources.geom, ${bboxEnv})) / 
+         (ST_Area(resources.geom) + ST_Area(${bboxEnv}) - ST_Area(ST_Intersection(resources.geom, ${bboxEnv}))))
+       `;
+  }
+
+  if (sort.field === 'gbl_indexYear_im') {
+    const dir = sort.dir.toUpperCase();
+    orderBy = `TRY_CAST(resources."gbl_indexYear_im" AS INTEGER) ${dir} NULLS LAST, resources."dct_title_s" ASC`;
+  } else if (sort.field === 'dct_title_s') {
+    if (spatialScore) {
+      orderBy = `${spatialScore} DESC, resources."dct_title_s" ASC`;
+    } else {
+      orderBy = `resources."dct_title_s" ${sort.dir.toUpperCase()}`;
+    }
+  } else {
+    // Generic
+    const safeSortCol = sort.field.replace(/[^a-zA-Z0-9_]/g, "");
+    if (safeSortCol) {
+      orderBy = `resources."${safeSortCol}" ${sort.dir.toUpperCase()}, resources."dct_title_s" ASC`;
+    }
+  }
+
+  const sql = `
+        WITH sorted_ids AS (
+            SELECT 
+                resources.id,
+                ROW_NUMBER() OVER (ORDER BY ${orderBy}) as rn
+            FROM resources
+            WHERE ${where}
+        ),
+        target AS (
+            SELECT rn FROM sorted_ids WHERE id = '${safeId}'
+        )
+        SELECT 
+            (SELECT COUNT(*) FROM sorted_ids) as total,
+            t.rn as current_pos,
+            prev.id as prev_id,
+            next.id as next_id
+        FROM target t
+        LEFT JOIN sorted_ids prev ON prev.rn = t.rn - 1
+        LEFT JOIN sorted_ids next ON next.rn = t.rn + 1
+    `;
+
+  try {
+    const res = await conn.query(sql);
+    if (res.numRows === 0) return { position: 0, total: 0 };
+    const row = res.get(0);
+    if (!row) return { position: 0, total: 0 };
+    return {
+      total: Number(row.total),
+      position: Number(row.current_pos),
+      prevId: row.prev_id ? String(row.prev_id) : undefined,
+      nextId: row.next_id ? String(row.next_id) : undefined
+    };
+  } catch (e) {
+    console.warn("getSearchNeighbors failed", e);
+    return { position: 0, total: 0 };
+  }
 }
 
 export async function suggest(text: string, limit: number = 10): Promise<SuggestResult[]> {

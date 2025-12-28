@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Resource } from '../aardvark/model';
-import { queryResourceById, querySimilarResources, ensureEmbeddings } from '../duckdb/duckdbClient';
+import { queryResourceById, querySimilarResources, ensureEmbeddings, getSearchNeighbors, FacetedSearchRequest } from '../duckdb/duckdbClient';
 import { MapContainer, TileLayer, Rectangle } from 'react-leaflet';
+import { ResourceViewer } from './ResourceViewer';
 import { Link } from './Link';
 import 'leaflet/dist/leaflet.css';
 import { LatLngBoundsExpression } from 'leaflet';
+
+// ... (existing imports)
+
 
 interface ResourceShowProps {
     id: string;
@@ -58,6 +62,7 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
     const [similarResources, setSimilarResources] = useState<Resource[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [pagination, setPagination] = useState<{ prevId?: string, nextId?: string, position: number, total: number }>({ position: 0, total: 0 });
 
     useEffect(() => {
         const load = async () => {
@@ -70,6 +75,51 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
                 if (r) {
                     // Fetch similar resources (Metadata Overlap)
                     querySimilarResources(id).then(setSimilarResources);
+
+                    // Search Pagination Logic
+                    const params = new URLSearchParams(window.location.search);
+                    const req: FacetedSearchRequest = { filters: {} };
+
+                    if (params.get("q")) req.q = params.get("q")!;
+                    if (params.get("bbox")) {
+                        const [minX, minY, maxX, maxY] = params.get("bbox")!.split(',').map(Number);
+                        if (!isNaN(minX)) req.bbox = { minX, minY, maxX, maxY };
+                    }
+                    if (params.get("sort")) {
+                        const s = params.get("sort")!;
+                        if (s === "year_desc") req.sort = [{ field: "gbl_indexYear_im", dir: "desc" }];
+                        else if (s === "year_asc") req.sort = [{ field: "gbl_indexYear_im", dir: "asc" }];
+                        else if (s === "title_asc") req.sort = [{ field: "dct_title_s", dir: "asc" }];
+                        else if (s === "title_desc") req.sort = [{ field: "dct_title_s", dir: "desc" }];
+                        else req.sort = [{ field: "dct_title_s", dir: "asc" }];
+                    }
+
+                    for (const [key, val] of params.entries()) {
+                        const includeMatch = key.match(/^include_filters\[([^\]]+)\]\[\]$/);
+                        if (includeMatch) {
+                            const field = includeMatch[1];
+                            if (!req.filters![field]) req.filters![field] = {};
+                            if (!req.filters![field].any) req.filters![field].any = [];
+                            req.filters![field].any!.push(val);
+                            continue;
+                        }
+                        const excludeMatch = key.match(/^exclude_filters\[([^\]]+)\]\[\]$/);
+                        if (excludeMatch) {
+                            const field = excludeMatch[1];
+                            if (!req.filters![field]) req.filters![field] = {};
+                            if (!req.filters![field].none) req.filters![field].none = [];
+                            req.filters![field].none!.push(val);
+                            continue;
+                        }
+                        if (key.startsWith("f.")) {
+                            const field = key.substring(2).trim();
+                            if (!req.filters![field]) req.filters![field] = {};
+                            if (!req.filters![field].any) req.filters![field].any = [];
+                            req.filters![field].any!.push(val);
+                        }
+                    }
+
+                    getSearchNeighbors(req, id).then(setPagination);
                 }
             } catch (e) {
                 setError("Failed to load resource");
@@ -79,6 +129,13 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
         };
         load();
     }, [id]);
+
+    const navigateToId = (targetId: string) => {
+        const search = window.location.search;
+        const url = `/resources/${encodeURIComponent(targetId)}${search}`;
+        window.history.pushState({}, "", url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+    };
 
     if (loading) {
         return <div className="p-8 text-center text-slate-500">Loading resource...</div>;
@@ -125,31 +182,90 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
         <div className="max-w-7xl mx-auto w-full bg-white dark:bg-slate-900 min-h-full">
             {/* Header / Breadcrumb */}
             <div className="border-b border-gray-200 dark:border-slate-800 p-6">
-                <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-2">
-                    <button onClick={onBack} className="hover:text-indigo-600 dark:hover:text-indigo-400">
-                        Home
-                    </button>
-                    {breadcrumbItems.map((item, idx) => {
-                        // Build cumulative filters up to this index
-                        const params = new URLSearchParams();
-                        for (let i = 0; i <= idx; i++) {
-                            const prev = breadcrumbItems[i];
-                            params.append(`include_filters[${prev.field}][]`, prev.label!);
-                        }
-                        const href = `/?${params.toString()}`;
+                <div className="flex items-center text-sm text-slate-500 dark:text-slate-400 mb-2">
+                    {/* Left: Breadcrumbs */}
+                    <div className="flex items-center gap-2 overflow-hidden flex-1">
+                        {breadcrumbItems.map((item, idx) => {
+                            // Build cumulative filters up to this index
+                            const params = new URLSearchParams();
+                            for (let i = 0; i <= idx; i++) {
+                                const prev = breadcrumbItems[i];
+                                params.append(`include_filters[${prev.field}][]`, prev.label!);
+                            }
+                            const href = `/?${params.toString()}`;
 
-                        return (
-                            <React.Fragment key={idx}>
-                                <span>/</span>
-                                <Link
-                                    href={href}
-                                    className="hover:text-indigo-600 dark:hover:text-indigo-400 truncate max-w-[200px]"
+                            return (
+                                <React.Fragment key={idx}>
+                                    {idx > 0 && <span>&rsaquo;</span>}
+                                    <Link
+                                        href={href}
+                                        className="hover:text-indigo-600 dark:hover:text-indigo-400 truncate whitespace-nowrap"
+                                    >
+                                        {item.label}
+                                    </Link>
+                                </React.Fragment>
+                            );
+                        })}
+                    </div>
+
+                    {/* Right: Navigation Controls */}
+                    <div className="flex items-center gap-4 shrink-0 ml-4">
+                        {/* Back to Results */}
+                        <Link
+                            href={`/?${window.location.search.substring(1)}`}
+                            className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clipRule="evenodd" />
+                                <path d="M8.707 7.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l2-2a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" />
+                                {/* Actually let's use a standard back arrow icon */}
+                                <path fillRule="evenodd" d="M11.78 5.22a.75.75 0 010 1.06L8.06 10l3.72 3.72a.75.75 0 11-1.06 1.06l-4.25-4.25a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0z" clipRule="evenodd" />
+                            </svg>
+                            Back
+                        </Link>
+
+                        {/* Pagination */}
+                        {pagination.total > 0 && (
+                            <>
+                                <div className="h-4 w-px bg-gray-300 dark:bg-slate-700 mx-2"></div>
+                                <button
+                                    onClick={() => pagination.prevId && navigateToId(pagination.prevId)}
+                                    disabled={!pagination.prevId}
+                                    className="flex items-center gap-1 disabled:opacity-30 hover:text-indigo-600 disabled:cursor-not-allowed transition-colors"
                                 >
-                                    {item.label}
-                                </Link>
-                            </React.Fragment>
-                        );
-                    })}
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M11.78 5.22a.75.75 0 010 1.06L8.06 10l3.72 3.72a.75.75 0 11-1.06 1.06l-4.25-4.25a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0z" clipRule="evenodd" />
+                                    </svg>
+                                    Prev
+                                </button>
+                                <span className="text-slate-900 dark:text-slate-200 font-medium">
+                                    {pagination.position} of {pagination.total}
+                                </span>
+                                <button
+                                    onClick={() => pagination.nextId && navigateToId(pagination.nextId)}
+                                    disabled={!pagination.nextId}
+                                    className="flex items-center gap-1 disabled:opacity-30 hover:text-indigo-600 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Next
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M8.22 5.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                <div className="h-4 w-px bg-gray-300 dark:bg-slate-700 mx-2"></div>
+                            </>
+                        )}
+
+                        {/* Clear Search */}
+                        <Link
+                            href="/"
+                            className="flex items-center gap-1 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                        >
+                            Clear
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+                            </svg>
+                        </Link>
+                    </div>
                 </div>
                 <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{resource.dct_title_s}</h1>
                 <div className="flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-400 items-center">
@@ -175,21 +291,26 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
                 </div>
             </div>
 
+            {/* Resource Viewer */}
+            <div className="px-6 pt-6">
+                <ResourceViewer resource={resource} />
+            </div>
+
             <div className="flex flex-col lg:flex-row">
                 {/* Main Content: Metadata */}
-                <div className="flex-1 p-6 border-r border-gray-200 dark:border-slate-800">
+                <div className="flex-1 min-w-0 p-6 border-r border-gray-200 dark:border-slate-800">
                     <h2 className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">Full Details</h2>
 
                     <dl className="grid grid-cols-[160px_1fr] gap-y-4 text-sm">
                         {Object.entries(resource).map(([key, value]) => {
-                            if (!value || (Array.isArray(value) && value.length === 0) || key === 'id' || key.startsWith('_')) return null;
+                            if (!value || (Array.isArray(value) && value.length === 0) || key === 'id' || key === 'dct_references_s' || key.startsWith('_')) return null;
                             // Basic label formatting
                             const label = key.replace(/^[a-z]+_/, '').replace(/_[a-z]+$/, '').replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
 
                             return (
                                 <React.Fragment key={key}>
                                     <dt className="font-medium text-slate-500 dark:text-slate-400">{label}</dt>
-                                    <dd className="text-slate-900 dark:text-slate-200 break-words">
+                                    <dd className="text-slate-900 dark:text-slate-200 break-all">
                                         {(() => {
                                             const isFacetable = FACETABLE_FIELDS.includes(key);
                                             const values = Array.isArray(value) ? value : [String(value)];
