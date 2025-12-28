@@ -83,9 +83,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                 if (s.bbox) params.set("bbox", s.bbox);
                 if (s.yearRange) params.set("yearRange", s.yearRange);
                 if (s.view && s.view !== 'list') params.set("view", s.view);
+
                 for (const [key, vals] of Object.entries(s.facets)) {
-                    for (const v of vals) {
-                        params.append(`f.${key} `, v);
+                    if (key.startsWith("-")) {
+                        const field = key.substring(1);
+                        for (const v of vals) {
+                            params.append(`exclude_filters[${field}][]`, v);
+                        }
+                    } else {
+                        for (const v of vals) {
+                            params.append(`include_filters[${key}][]`, v);
+                        }
                     }
                 }
                 return params;
@@ -98,8 +106,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                 const yearRange = params.get("yearRange") || undefined;
                 const viewParam = params.get("view");
                 const view = (viewParam === 'gallery' || viewParam === 'map') ? viewParam : 'list';
+
                 const facets: Record<string, string[]> = {};
                 for (const [key, val] of params.entries()) {
+                    // Match include_filters[field][]
+                    const includeMatch = key.match(/^include_filters\[([^\]]+)\]\[\]$/);
+                    if (includeMatch) {
+                        const field = includeMatch[1];
+                        if (!facets[field]) facets[field] = [];
+                        facets[field].push(val);
+                        continue;
+                    }
+
+                    // Match exclude_filters[field][]
+                    const excludeMatch = key.match(/^exclude_filters\[([^\]]+)\]\[\]$/);
+                    if (excludeMatch) {
+                        const field = excludeMatch[1];
+                        const internalKey = `-${field}`;
+                        if (!facets[internalKey]) facets[internalKey] = [];
+                        facets[internalKey].push(val);
+                        continue;
+                    }
+
+                    // Legacy f.field support for graceful migration (optional, but good for safety)
                     if (key.startsWith("f.")) {
                         const field = key.substring(2).trim();
                         if (!facets[field]) facets[field] = [];
@@ -117,7 +146,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                 params.delete("view");
                 const keysToDelete: string[] = [];
                 for (const key of params.keys()) {
-                    if (key.startsWith("f.")) {
+                    if (key.startsWith("include_filters") || key.startsWith("exclude_filters") || key.startsWith("f.")) {
                         keysToDelete.push(key);
                     }
                 }

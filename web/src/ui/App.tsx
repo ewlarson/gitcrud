@@ -36,6 +36,12 @@ export const App: React.FC = () => {
         return p;
       },
       fromUrl: (p, pathname) => {
+        // Check for /resources/:id/edit
+        const editMatch = pathname.match(/^\/resources\/([^/]+)\/edit$/);
+        if (editMatch) {
+          return { view: "edit", id: decodeURIComponent(editMatch[1]) };
+        }
+
         // Check for /resources/:id
         const resourceMatch = pathname.match(/^\/resources\/([^/]+)$/);
         if (resourceMatch) {
@@ -51,6 +57,9 @@ export const App: React.FC = () => {
         p.delete("id");
       },
       path: (s) => {
+        if (s.view === "edit" && s.id) {
+          return `/resources/${encodeURIComponent(s.id)}/edit`;
+        }
         if (s.view === "resource" && s.id) {
           return `/resources/${encodeURIComponent(s.id)}`;
         }

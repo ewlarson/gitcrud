@@ -11,6 +11,19 @@ interface ResourceShowProps {
     onBack?: () => void;
 }
 
+// Fields that should become faceted links
+const FACETABLE_FIELDS = [
+    'dct_subject_sm',
+    'dct_creator_sm',
+    'dcat_theme_sm',
+    'dct_spatial_sm',
+    'gbl_resourceClass_sm',
+    'gbl_resourceType_sm',
+    'dct_publisher_sm',
+    'dct_language_sm',
+    'dct_format_s'
+];
+
 const CopyButton: React.FC<{ text: string }> = ({ text }) => {
     const [copied, setCopied] = useState(false);
 
@@ -95,11 +108,11 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
         }
     }
 
-    const breadcrumbs = [
-        ...(resource.gbl_resourceClass_sm || []),
-        ...(resource.gbl_resourceType_sm || []),
-        ...(resource.dct_spatial_sm || [])
-    ].slice(0, 4).join(" > ");
+    const breadcrumbItems = [
+        { label: resource.gbl_resourceClass_sm?.[0], field: 'gbl_resourceClass_sm' },
+        { label: resource.gbl_resourceType_sm?.[0], field: 'gbl_resourceType_sm' },
+        { label: resource.dct_spatial_sm?.[0], field: 'dct_spatial_sm' },
+    ].filter(item => item.label);
 
     const downloadLink = resource.dct_references_s ? (() => {
         try {
@@ -116,17 +129,49 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
                     <button onClick={onBack} className="hover:text-indigo-600 dark:hover:text-indigo-400">
                         Home
                     </button>
-                    <span>/</span>
-                    <span className="truncate max-w-2xl">{breadcrumbs || "Resource"}</span>
+                    {breadcrumbItems.map((item, idx) => {
+                        // Build cumulative filters up to this index
+                        const params = new URLSearchParams();
+                        for (let i = 0; i <= idx; i++) {
+                            const prev = breadcrumbItems[i];
+                            params.append(`include_filters[${prev.field}][]`, prev.label!);
+                        }
+                        const href = `/?${params.toString()}`;
+
+                        return (
+                            <React.Fragment key={idx}>
+                                <span>/</span>
+                                <Link
+                                    href={href}
+                                    className="hover:text-indigo-600 dark:hover:text-indigo-400 truncate max-w-[200px]"
+                                >
+                                    {item.label}
+                                </Link>
+                            </React.Fragment>
+                        );
+                    })}
                 </div>
                 <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{resource.dct_title_s}</h1>
-                <div className="flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-400">
+                <div className="flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-400 items-center">
                     {resource.dct_publisher_sm?.[0] && (
                         <span>{resource.dct_publisher_sm[0]}</span>
                     )}
                     {resource.gbl_indexYear_im && (
                         <span>&middot; {resource.gbl_indexYear_im}</span>
                     )}
+
+                    <div className="flex-1"></div>
+
+                    <Link
+                        href={`/resources/${resource.id}/edit`}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                            <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+                            <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" />
+                        </svg>
+                        Edit Resource
+                    </Link>
                 </div>
             </div>
 
@@ -145,7 +190,26 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
                                 <React.Fragment key={key}>
                                     <dt className="font-medium text-slate-500 dark:text-slate-400">{label}</dt>
                                     <dd className="text-slate-900 dark:text-slate-200 break-words">
-                                        {Array.isArray(value) ? value.join(", ") : String(value)}
+                                        {(() => {
+                                            const isFacetable = FACETABLE_FIELDS.includes(key);
+                                            const values = Array.isArray(value) ? value : [String(value)];
+
+                                            return values.map((val, idx) => (
+                                                <React.Fragment key={idx}>
+                                                    {idx > 0 && ", "}
+                                                    {isFacetable ? (
+                                                        <Link
+                                                            href={`/?include_filters[${key}][]=${encodeURIComponent(val)}`}
+                                                            className="text-indigo-600 dark:text-indigo-400 hover:underline"
+                                                        >
+                                                            {val}
+                                                        </Link>
+                                                    ) : (
+                                                        val
+                                                    )}
+                                                </React.Fragment>
+                                            ));
+                                        })()}
                                     </dd>
                                 </React.Fragment>
                             );
@@ -345,8 +409,8 @@ const Carousel: React.FC<{ items: Resource[] }> = ({ items }) => {
                                 key={i}
                                 onClick={() => setCurrentPage(i)}
                                 className={`w-2 h-2 rounded-full transition-colors ${i === currentPage
-                                        ? 'bg-indigo-600 dark:bg-indigo-400'
-                                        : 'bg-gray-300 dark:bg-slate-700 hover:bg-gray-400 dark:hover:bg-slate-600'
+                                    ? 'bg-indigo-600 dark:bg-indigo-400'
+                                    : 'bg-gray-300 dark:bg-slate-700 hover:bg-gray-400 dark:hover:bg-slate-600'
                                     }`}
                                 aria-label={`Go to page ${i + 1}`}
                                 aria-current={i === currentPage ? 'page' : undefined}
