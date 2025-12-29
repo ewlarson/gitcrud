@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Resource } from "../aardvark/model";
 import { searchResources, SearchResult } from "../duckdb/duckdbClient";
 import { ProjectConfig } from "../github/client";
+import { Pagination, SortHeader, TableContainer } from "./shared/Table";
 
 interface ResourceListProps {
     project: ProjectConfig | null;
@@ -71,8 +72,6 @@ export const ResourceList: React.FC<ResourceListProps> = ({
         }
     };
 
-    const totalPages = Math.ceil(total / pageSize);
-
     return (
         <div className="flex h-full flex-col bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
             {/* Header / Toolbar */}
@@ -101,125 +100,103 @@ export const ResourceList: React.FC<ResourceListProps> = ({
             </div>
 
             {/* Table */}
-            <div className="flex-1 overflow-auto p-4">
-                <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-                    <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-800">
-                        <thead className="bg-gray-50 dark:bg-slate-950">
-                            <tr>
-                                <SortHeader
-                                    label="ID"
-                                    column="id"
-                                    currentSort={sortBy}
-                                    sortOrder={sortOrder}
-                                    onClick={handleSort}
-                                />
-                                <SortHeader
-                                    label="Title"
-                                    column="dct_title_s"
-                                    currentSort={sortBy}
-                                    sortOrder={sortOrder}
-                                    onClick={handleSort}
-                                />
-                                <SortHeader
-                                    label="Class"
-                                    column="gbl_resourceClass_sm"
-                                    currentSort={sortBy}
-                                    sortOrder={sortOrder}
-                                    onClick={handleSort}
-                                />
-                                <SortHeader
-                                    label="Access"
-                                    column="dct_accessRights_s"
-                                    currentSort={sortBy}
-                                    sortOrder={sortOrder}
-                                    onClick={handleSort}
-                                />
-                                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                                    Actions
-                                </th>
+            <TableContainer>
+                <thead className="bg-gray-50 dark:bg-slate-950">
+                    <tr>
+                        <SortHeader
+                            label="ID"
+                            column="id"
+                            currentSort={sortBy}
+                            sortOrder={sortOrder}
+                            onClick={handleSort}
+                        />
+                        <SortHeader
+                            label="Title"
+                            column="dct_title_s"
+                            currentSort={sortBy}
+                            sortOrder={sortOrder}
+                            onClick={handleSort}
+                        />
+                        <SortHeader
+                            label="Class"
+                            column="gbl_resourceClass_sm"
+                            currentSort={sortBy}
+                            sortOrder={sortOrder}
+                            onClick={handleSort}
+                        />
+                        <SortHeader
+                            label="Access"
+                            column="dct_accessRights_s"
+                            currentSort={sortBy}
+                            sortOrder={sortOrder}
+                            onClick={handleSort}
+                        />
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/50">
+                    {loading ? (
+                        <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
+                                Loading...
+                            </td>
+                        </tr>
+                    ) : resources.length === 0 ? (
+                        <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
+                                No resources found.
+                            </td>
+                        </tr>
+                    ) : (
+                        resources.map((r) => (
+                            <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                <td className="whitespace-nowrap px-4 py-3 font-mono text-sm text-slate-600 dark:text-slate-300">
+                                    {r.id}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-900 dark:text-slate-100 font-medium">
+                                    {r.dct_title_s || <span className="text-slate-400 italic">Untitled</span>}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                                    {r.gbl_resourceClass_sm.map(c => (
+                                        <span key={c} className="mr-1 inline-flex items-center rounded bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+                                            {c}
+                                        </span>
+                                    ))}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                                    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public"
+                                        ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                                        : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+                                        }`}>
+                                        {r.dct_accessRights_s}
+                                    </span>
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3 text-sm">
+                                    <button
+                                        onClick={() => onEdit(r.id)}
+                                        className="font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline"
+                                    >
+                                        Edit
+                                    </button>
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/50">
-                            {loading ? (
-                                <tr>
-                                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
-                                        Loading...
-                                    </td>
-                                </tr>
-                            ) : resources.length === 0 ? (
-                                <tr>
-                                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
-                                        No resources found.
-                                    </td>
-                                </tr>
-                            ) : (
-                                resources.map((r) => (
-                                    <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-sm text-slate-600 dark:text-slate-300">
-                                            {r.id}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-slate-900 dark:text-slate-100 font-medium">
-                                            {r.dct_title_s || <span className="text-slate-400 italic">Untitled</span>}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
-                                            {r.gbl_resourceClass_sm.map(c => (
-                                                <span key={c} className="mr-1 inline-flex items-center rounded bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
-                                                    {c}
-                                                </span>
-                                            ))}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
-                                            <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${r.dct_accessRights_s === "Public"
-                                                ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-                                                : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-                                                }`}>
-                                                {r.dct_accessRights_s}
-                                            </span>
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-sm">
-                                            <button
-                                                onClick={() => onEdit(r.id)}
-                                                className="font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline"
-                                            >
-                                                Edit
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                        ))
+                    )}
+                </tbody>
+            </TableContainer>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 px-4 py-3">
-                <div className="text-sm text-slate-500 dark:text-slate-400">
-                    Showing <span className="font-medium text-slate-900 dark:text-white">{(page - 1) * pageSize + 1}</span> to{" "}
-                    <span className="font-medium text-slate-900 dark:text-white">{Math.min(page * pageSize, total)}</span> of{" "}
-                    <span className="font-medium text-slate-900 dark:text-white">{total}</span> results
-                </div>
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => setPage(Math.max(1, page - 1))}
-                        disabled={page === 1}
-                        className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 shadow-sm"
-                    >
-                        Previous
-                    </button>
-                    <button
-                        onClick={() => setPage(Math.min(totalPages, page + 1))}
-                        disabled={page >= totalPages}
-                        className="rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-sm text-slate-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 shadow-sm"
-                    >
-                        Next
-                    </button>
-                </div>
-            </div>
+            <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onChange={setPage}
+            />
         </div>
     );
 };
-
 const SortHeader: React.FC<{
     label: string;
     column: string;

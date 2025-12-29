@@ -218,6 +218,7 @@ function ensureMdVersion(data: AardvarkJson): void {
   }
 }
 
+
 export function resourceFromJson(raw: AardvarkJson): Resource {
   ensureMdVersion(raw);
   const missing = REQUIRED_FIELDS.filter(
@@ -232,60 +233,6 @@ export function resourceFromJson(raw: AardvarkJson): Resource {
   const access = String(raw["dct_accessRights_s"]);
   const classes = (raw["gbl_resourceClass_sm"] as unknown[]) ?? [];
 
-  const res: Resource = {
-    id,
-    dct_title_s: title,
-    dct_accessRights_s: access,
-    gbl_resourceClass_sm: classes.map(String),
-    gbl_mdVersion_s: String(raw["gbl_mdVersion_s"] ?? "Aardvark"),
-    dct_format_s: (raw["dct_format_s"] as string | undefined) ?? null,
-
-    dct_alternative_sm: (raw["dct_alternative_sm"] as string[] | undefined) ?? [],
-    dct_description_sm: (raw["dct_description_sm"] as string[] | undefined) ?? [],
-    dct_language_sm: (raw["dct_language_sm"] as string[] | undefined) ?? [],
-    gbl_displayNote_sm: (raw["gbl_displayNote_sm"] as string[] | undefined) ?? [],
-
-    dct_creator_sm: (raw["dct_creator_sm"] as string[] | undefined) ?? [],
-    dct_publisher_sm: (raw["dct_publisher_sm"] as string[] | undefined) ?? [],
-    schema_provider_s: (raw["schema_provider_s"] as string | undefined) ?? null,
-
-    gbl_resourceType_sm: (raw["gbl_resourceType_sm"] as string[] | undefined) ?? [],
-    dct_subject_sm: (raw["dct_subject_sm"] as string[] | undefined) ?? [],
-    dcat_theme_sm: (raw["dcat_theme_sm"] as string[] | undefined) ?? [],
-    dcat_keyword_sm: (raw["dcat_keyword_sm"] as string[] | undefined) ?? [],
-
-    dct_temporal_sm: (raw["dct_temporal_sm"] as string[] | undefined) ?? [],
-    dct_issued_s: (raw["dct_issued_s"] as string | undefined) ?? null,
-    gbl_indexYear_im: (raw["gbl_indexYear_im"] as number | undefined) ?? null,
-    gbl_dateRange_drsim: (raw["gbl_dateRange_drsim"] as string[] | undefined) ?? [],
-
-    dct_spatial_sm: (raw["dct_spatial_sm"] as string[] | undefined) ?? [],
-    dcat_bbox: (raw["dcat_bbox"] as string | undefined) ?? null,
-    locn_geometry: (raw["locn_geometry"] as string | undefined) ?? null,
-    dcat_centroid: (raw["dcat_centroid"] as string | undefined) ?? null,
-    gbl_georeferenced_b: (raw["gbl_georeferenced_b"] as boolean | undefined) ?? null,
-
-    dct_identifier_sm: (raw["dct_identifier_sm"] as string[] | undefined) ?? [],
-    gbl_wxsIdentifier_s: (raw["gbl_wxsIdentifier_s"] as string | undefined) ?? null,
-    dct_rights_sm: (raw["dct_rights_sm"] as string[] | undefined) ?? [],
-    dct_rightsHolder_sm: (raw["dct_rightsHolder_sm"] as string[] | undefined) ?? [],
-    dct_license_sm: (raw["dct_license_sm"] as string[] | undefined) ?? [],
-    gbl_suppressed_b: (raw["gbl_suppressed_b"] as boolean | undefined) ?? null,
-
-    gbl_fileSize_s: (raw["gbl_fileSize_s"] as string | undefined) ?? null,
-    dct_references_s: (raw["dct_references_s"] as string | undefined),
-
-    pcdm_memberOf_sm: (raw["pcdm_memberOf_sm"] as string[] | undefined) ?? [],
-    dct_isPartOf_sm: (raw["dct_isPartOf_sm"] as string[] | undefined) ?? [],
-    dct_source_sm: (raw["dct_source_sm"] as string[] | undefined) ?? [],
-    dct_isVersionOf_sm: (raw["dct_isVersionOf_sm"] as string[] | undefined) ?? [],
-    dct_replaces_sm: (raw["dct_replaces_sm"] as string[] | undefined) ?? [],
-    dct_isReplacedBy_sm: (raw["dct_isReplacedBy_sm"] as string[] | undefined) ?? [],
-    dct_relation_sm: (raw["dct_relation_sm"] as string[] | undefined) ?? [],
-
-    extra: {},
-  };
-
   const modeledKeys = new Set([
     ...SCALAR_FIELDS,
     ...REPEATABLE_STRING_FIELDS,
@@ -297,8 +244,103 @@ export function resourceFromJson(raw: AardvarkJson): Resource {
       extra[k] = v;
     }
   }
-  res.extra = extra;
+
+  const res: Resource = {
+    id,
+    dct_title_s: title,
+    dct_accessRights_s: access,
+    gbl_resourceClass_sm: classes.map(String),
+    gbl_mdVersion_s: String(raw["gbl_mdVersion_s"] ?? "Aardvark"),
+    dct_format_s: (raw["dct_format_s"] as string | undefined) ?? null,
+
+    ...extractDescriptiveFields(raw),
+    ...extractCreatorFields(raw),
+    ...extractSubjectFields(raw),
+    ...extractTemporalFields(raw),
+    ...extractSpatialFields(raw),
+    ...extractAdminFields(raw),
+    ...extractObjectFields(raw),
+    ...extractRelationFields(raw),
+
+    extra
+  };
+
   return res;
+}
+
+function extractDescriptiveFields(raw: AardvarkJson) {
+  return {
+    dct_alternative_sm: (raw["dct_alternative_sm"] as string[] | undefined) ?? [],
+    dct_description_sm: (raw["dct_description_sm"] as string[] | undefined) ?? [],
+    dct_language_sm: (raw["dct_language_sm"] as string[] | undefined) ?? [],
+    gbl_displayNote_sm: (raw["gbl_displayNote_sm"] as string[] | undefined) ?? [],
+  };
+}
+
+function extractCreatorFields(raw: AardvarkJson) {
+  return {
+    dct_creator_sm: (raw["dct_creator_sm"] as string[] | undefined) ?? [],
+    dct_publisher_sm: (raw["dct_publisher_sm"] as string[] | undefined) ?? [],
+    schema_provider_s: (raw["schema_provider_s"] as string | undefined) ?? null,
+  };
+}
+
+function extractSubjectFields(raw: AardvarkJson) {
+  return {
+    gbl_resourceType_sm: (raw["gbl_resourceType_sm"] as string[] | undefined) ?? [],
+    dct_subject_sm: (raw["dct_subject_sm"] as string[] | undefined) ?? [],
+    dcat_theme_sm: (raw["dcat_theme_sm"] as string[] | undefined) ?? [],
+    dcat_keyword_sm: (raw["dcat_keyword_sm"] as string[] | undefined) ?? [],
+  };
+}
+
+function extractTemporalFields(raw: AardvarkJson) {
+  return {
+    dct_temporal_sm: (raw["dct_temporal_sm"] as string[] | undefined) ?? [],
+    dct_issued_s: (raw["dct_issued_s"] as string | undefined) ?? null,
+    gbl_indexYear_im: (raw["gbl_indexYear_im"] as number | undefined) ?? null,
+    gbl_dateRange_drsim: (raw["gbl_dateRange_drsim"] as string[] | undefined) ?? [],
+  };
+}
+
+function extractSpatialFields(raw: AardvarkJson) {
+  return {
+    dct_spatial_sm: (raw["dct_spatial_sm"] as string[] | undefined) ?? [],
+    dcat_bbox: (raw["dcat_bbox"] as string | undefined) ?? null,
+    locn_geometry: (raw["locn_geometry"] as string | undefined) ?? null,
+    dcat_centroid: (raw["dcat_centroid"] as string | undefined) ?? null,
+    gbl_georeferenced_b: (raw["gbl_georeferenced_b"] as boolean | undefined) ?? null,
+  };
+}
+
+function extractAdminFields(raw: AardvarkJson) {
+  return {
+    dct_identifier_sm: (raw["dct_identifier_sm"] as string[] | undefined) ?? [],
+    gbl_wxsIdentifier_s: (raw["gbl_wxsIdentifier_s"] as string | undefined) ?? null,
+    dct_rights_sm: (raw["dct_rights_sm"] as string[] | undefined) ?? [],
+    dct_rightsHolder_sm: (raw["dct_rightsHolder_sm"] as string[] | undefined) ?? [],
+    dct_license_sm: (raw["dct_license_sm"] as string[] | undefined) ?? [],
+    gbl_suppressed_b: (raw["gbl_suppressed_b"] as boolean | undefined) ?? null,
+  };
+}
+
+function extractObjectFields(raw: AardvarkJson) {
+  return {
+    gbl_fileSize_s: (raw["gbl_fileSize_s"] as string | undefined) ?? null,
+    dct_references_s: (raw["dct_references_s"] as string | undefined),
+  };
+}
+
+function extractRelationFields(raw: AardvarkJson) {
+  return {
+    pcdm_memberOf_sm: (raw["pcdm_memberOf_sm"] as string[] | undefined) ?? [],
+    dct_isPartOf_sm: (raw["dct_isPartOf_sm"] as string[] | undefined) ?? [],
+    dct_source_sm: (raw["dct_source_sm"] as string[] | undefined) ?? [],
+    dct_isVersionOf_sm: (raw["dct_isVersionOf_sm"] as string[] | undefined) ?? [],
+    dct_replaces_sm: (raw["dct_replaces_sm"] as string[] | undefined) ?? [],
+    dct_isReplacedBy_sm: (raw["dct_isReplacedBy_sm"] as string[] | undefined) ?? [],
+    dct_relation_sm: (raw["dct_relation_sm"] as string[] | undefined) ?? [],
+  };
 }
 
 export function resourceToJson(resource: Resource): AardvarkJson {
@@ -308,7 +350,7 @@ export function resourceToJson(resource: Resource): AardvarkJson {
     dct_title_s: resource.dct_title_s,
     dct_accessRights_s: resource.dct_accessRights_s,
     gbl_resourceClass_sm: resource.gbl_resourceClass_sm,
-    gbl_mdVersion_s: resource.gbl_mdVersion_s ?? "Aardvark",
+    gbl_mdVersion_s: resource.gbl_mdVersion_s,
 
     // Identification
     dct_alternative_sm: resource.dct_alternative_sm,
@@ -371,5 +413,3 @@ export function resourceToJson(resource: Resource): AardvarkJson {
   ensureMdVersion(base);
   return base;
 }
-
-

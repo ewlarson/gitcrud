@@ -1089,6 +1089,7 @@ export async function upsertResource(resource: Resource, distributions: Distribu
 
 // ... existing code ...
 
+
 export async function importJsonData(json: any, options: { skipSave?: boolean } = {}): Promise<number> {
   const records = Array.isArray(json) ? json : [json];
   let count = 0;
@@ -1105,84 +1106,8 @@ export async function importJsonData(json: any, options: { skipSave?: boolean } 
       continue;
     }
 
-    // Extract Distributions from dct_references_s
-    // Aardvark spec: dct_references_s is a JSON string: "{\"http://.../wms\":\"http://url...\"}"
-    const distributions: Distribution[] = [];
-    if (record.dct_references_s) {
-      try {
-        const refs = JSON.parse(record.dct_references_s);
-        for (const [uri, value] of Object.entries(refs)) {
-          // Check if URI is a known relation type
-          const relKey = uriToKey.get(uri);
-          if (relKey) {
-
-            // Normalize to array
-            const items = Array.isArray(value) ? value : [value];
-
-            for (const item of items) {
-              let finalUrl = "";
-              let label: string | undefined = undefined;
-
-              if (typeof item === 'string') {
-                finalUrl = item;
-              } else if (typeof item === 'object' && item !== null) {
-                // unexpected object
-                if ('url' in item) {
-                  finalUrl = String((item as any).url);
-                  if ('label' in item) label = String((item as any).label);
-                } else {
-                  // Unknown structure?
-                  console.warn(`Encountered unknown object in dct_references_s for ${record.id} key ${uri}:`, item);
-                  finalUrl = JSON.stringify(item);
-                }
-              } else {
-                finalUrl = String(item);
-              }
-
-              if (finalUrl) {
-                distributions.push({
-                  resource_id: record.id,
-                  relation_key: relKey,
-                  url: finalUrl,
-                  label: label
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`Failed to parse dct_references_s for ${record.id}`, e);
-      }
-    }
-
-    // Prepare Resource object
-    const res: Resource = {
-      id: record.id,
-      dct_title_s: record.dct_title_s || "",
-      dct_description_sm: Array.isArray(record.dct_description_sm) ? record.dct_description_sm : (record.dct_description_sm ? [record.dct_description_sm] : []),
-      gbl_resourceClass_sm: Array.isArray(record.gbl_resourceClass_sm) ? record.gbl_resourceClass_sm : [],
-      dct_accessRights_s: record.dct_accessRights_s || "Public",
-      ...record
-    };
-
-    const listFields = [
-      "dct_alternative_sm", "dct_description_sm", "dct_language_sm",
-      "gbl_displayNote_sm", "dct_creator_sm", "dct_publisher_sm",
-      "gbl_resourceType_sm", "dct_subject_sm", "dcat_theme_sm",
-      "dcat_keyword_sm", "dct_temporal_sm", "gbl_dateRange_drsim",
-      "gbl_indexYear_im", "dct_spatial_sm", "dct_identifier_sm",
-      "dct_rights_sm", "dct_rightsHolder_sm", "dct_license_sm",
-      "pcdm_memberOf_sm", "dct_isPartOf_sm", "dct_source_sm",
-      "dct_isVersionOf_sm", "dct_replaces_sm", "dct_isReplacedBy_sm",
-      "dct_relation_sm"
-    ];
-
-    for (const field of listFields) {
-      if (res[field as keyof Resource] !== undefined && !Array.isArray(res[field as keyof Resource])) {
-        // Cast to array
-        (res as any)[field] = [res[field as keyof Resource]];
-      }
-    }
+    const distributions = extractDistributions(record, uriToKey);
+    const res = prepareResource(record);
 
     // Upsert
     // ALWAYS skip save inside loop to allow batch optimization
@@ -1196,6 +1121,87 @@ export async function importJsonData(json: any, options: { skipSave?: boolean } 
   }
 
   return count;
+}
+
+function extractDistributions(record: any, uriToKey: Map<string, string>): Distribution[] {
+  const distributions: Distribution[] = [];
+  if (record.dct_references_s) {
+    try {
+      const refs = JSON.parse(record.dct_references_s);
+      for (const [uri, value] of Object.entries(refs)) {
+        // Check if URI is a known relation type
+        const relKey = uriToKey.get(uri);
+        if (relKey) {
+          // Normalize to array
+          const items = Array.isArray(value) ? value : [value];
+
+          for (const item of items) {
+            let finalUrl = "";
+            let label: string | undefined = undefined;
+
+            if (typeof item === 'string') {
+              finalUrl = item;
+            } else if (typeof item === 'object' && item !== null) {
+              // unexpected object
+              if ('url' in item) {
+                finalUrl = String((item as any).url);
+                if ('label' in item) label = String((item as any).label);
+              } else {
+                // Unknown structure?
+                console.warn(`Encountered unknown object in dct_references_s for ${record.id} key ${uri}:`, item);
+                finalUrl = JSON.stringify(item);
+              }
+            } else {
+              finalUrl = String(item);
+            }
+
+            if (finalUrl) {
+              distributions.push({
+                resource_id: record.id,
+                relation_key: relKey,
+                url: finalUrl,
+                label: label
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Failed to parse dct_references_s for ${record.id}`, e);
+    }
+  }
+  return distributions;
+}
+
+function prepareResource(record: any): Resource {
+  const res: Resource = {
+    id: record.id,
+    dct_title_s: record.dct_title_s || "",
+    dct_description_sm: Array.isArray(record.dct_description_sm) ? record.dct_description_sm : (record.dct_description_sm ? [record.dct_description_sm] : []),
+    gbl_resourceClass_sm: Array.isArray(record.gbl_resourceClass_sm) ? record.gbl_resourceClass_sm : [],
+    dct_accessRights_s: record.dct_accessRights_s || "Public",
+    ...record
+  };
+
+  const listFields = [
+    "dct_alternative_sm", "dct_description_sm", "dct_language_sm",
+    "gbl_displayNote_sm", "dct_creator_sm", "dct_publisher_sm",
+    "gbl_resourceType_sm", "dct_subject_sm", "dcat_theme_sm",
+    "dcat_keyword_sm", "dct_temporal_sm", "gbl_dateRange_drsim",
+    "gbl_indexYear_im", "dct_spatial_sm", "dct_identifier_sm",
+    "dct_rights_sm", "dct_rightsHolder_sm", "dct_license_sm",
+    "pcdm_memberOf_sm", "dct_isPartOf_sm", "dct_source_sm",
+    "dct_isVersionOf_sm", "dct_replaces_sm", "dct_isReplacedBy_sm",
+    "dct_relation_sm"
+  ];
+
+  for (const field of listFields) {
+    if (res[field as keyof Resource] !== undefined && !Array.isArray(res[field as keyof Resource])) {
+      // Cast to array
+      (res as any)[field] = [res[field as keyof Resource]];
+    }
+  }
+  return res;
 }
 
 

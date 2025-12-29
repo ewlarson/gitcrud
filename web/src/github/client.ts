@@ -219,71 +219,20 @@ function toBase64Utf8(text: string): string {
   return btoa(unescape(encodeURIComponent(text)));
 }
 
-export async function upsertJsonFile(
+
+async function upsertFile(
   client: GithubClient,
   config: ProjectConfig,
   path: string,
-  json: unknown,
+  contentBase64: string,
   message: string
 ): Promise<void> {
-  const owner = config.owner;
-  const repo = config.repo;
-  const branch = config.branch;
-
-  let existingSha: string | undefined;
-  try {
-    const existing: any = await (client as any)["request"](
-      `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(
-        branch
-      )}`
-    );
-    existingSha = existing.sha as string | undefined;
-  } catch (err) {
-    // 404 means new file; anything else should surface
-    if (!(err instanceof Error) || !err.message.includes("404")) {
-      throw err;
-    }
-  }
-
-  const content = toBase64Utf8(JSON.stringify(json, null, 2));
-  const body: any = {
-    message,
-    content,
-    branch,
-  };
-  if (existingSha) {
-    body.sha = existingSha;
-  }
-
-  await (client as any)["request"](
-    `/repos/${owner}/${repo}/contents/${path}`,
-    {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
-}
-
-export async function upsertTextFile(
-  client: GithubClient,
-  config: ProjectConfig,
-  path: string,
-  content: string,
-  message: string
-): Promise<void> {
-  const owner = config.owner;
-  const repo = config.repo;
-  const branch = config.branch;
-
-  const encoded = toBase64Utf8(content);
+  const { owner, repo, branch } = config;
 
   async function putWithSha(sha: string | undefined): Promise<void> {
     const body: any = {
       message,
-      content: encoded,
+      content: contentBase64,
       branch,
     };
     if (sha) {
@@ -301,6 +250,7 @@ export async function upsertTextFile(
     );
   }
 
+  // 1. Get existing SHA
   let existingSha: string | undefined;
   try {
     const existing: any = await (client as any)["request"](
@@ -315,11 +265,13 @@ export async function upsertTextFile(
     }
   }
 
+  // 2. Try PUT with SHA
   try {
     await putWithSha(existingSha);
   } catch (err) {
     if (err instanceof Error && err.message.includes("does not match")) {
       // SHA is out of date; fetch latest and retry once.
+      console.warn(`SHA mismatch for ${path}, retrying...`);
       const latest: any = await (client as any)["request"](
         `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(
           branch
@@ -331,6 +283,28 @@ export async function upsertTextFile(
       throw err;
     }
   }
+}
+
+export async function upsertJsonFile(
+  client: GithubClient,
+  config: ProjectConfig,
+  path: string,
+  json: unknown,
+  message: string
+): Promise<void> {
+  const content = toBase64Utf8(JSON.stringify(json, null, 2));
+  await upsertFile(client, config, path, content, message);
+}
+
+export async function upsertTextFile(
+  client: GithubClient,
+  config: ProjectConfig,
+  path: string,
+  content: string,
+  message: string
+): Promise<void> {
+  const encoded = toBase64Utf8(content);
+  await upsertFile(client, config, path, encoded, message);
 }
 
 export function saveProjectConfig(config: ProjectConfig): void {

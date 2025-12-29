@@ -144,52 +144,64 @@ export class ImageService {
 
     private extractThumbnailFromManifest(json: any): string | null {
         try {
-            // 1. Manifest-level thumbnail
-            if (json.thumbnail) {
-                const t = Array.isArray(json.thumbnail) ? json.thumbnail[0] : json.thumbnail;
-                const id = typeof t === 'string' ? t : (t['@id'] || t['id']);
+            return this.extractFromManifestProp(json) ||
+                this.extractFromSequences(json) ||
+                this.extractFromItems(json);
+        } catch (e) {
+            console.warn("Error parsing manifest", e);
+        }
+        return null;
+    }
+
+    private extractFromManifestProp(json: any): string | null {
+        if (json.thumbnail) {
+            const t = Array.isArray(json.thumbnail) ? json.thumbnail[0] : json.thumbnail;
+            const id = typeof t === 'string' ? t : (t['@id'] || t['id']);
+            if (id) return id;
+        }
+        return null;
+    }
+
+    private extractFromSequences(json: any): string | null {
+        // IIIF v2
+        if (json.sequences && json.sequences.length > 0) {
+            const canvas = json.sequences[0].canvases?.[0];
+            if (canvas) {
+                const img = canvas.images?.[0]?.resource;
+                if (img) {
+                    if (img['@id']) return img['@id'];
+                    const svcId = img.service?.['@id'];
+                    if (svcId) return `${svcId}/full/400,/0/default.jpg`;
+                }
+            }
+        }
+        return null;
+    }
+
+    private extractFromItems(json: any): string | null {
+        // IIIF v3
+        if (json.items && json.items.length > 0) {
+            const canvas = json.items[0];
+            // Canvas thumbnail
+            if (canvas.thumbnail) {
+                const t = Array.isArray(canvas.thumbnail) ? canvas.thumbnail[0] : canvas.thumbnail;
+                const id = typeof t === 'string' ? t : (t['id'] || t['@id']);
                 if (id) return id;
             }
 
-            // 2. Sequences (IIIF v2)
-            if (json.sequences && json.sequences.length > 0) {
-                const canvas = json.sequences[0].canvases?.[0];
-                if (canvas) {
-                    const img = canvas.images?.[0]?.resource;
-                    if (img) {
-                        if (img['@id']) return img['@id'];
-                        const svcId = img.service?.['@id'];
-                        if (svcId) return `${svcId}/full/400,/0/default.jpg`;
-                    }
+            // Content Body
+            const body = canvas.items?.[0]?.items?.[0]?.body;
+            if (body) {
+                // Try service
+                let service = body.service;
+                if (Array.isArray(service)) service = service[0];
+                if (service) {
+                    const svcId = service['id'] || service['@id'] || (typeof service === 'string' ? service : null);
+                    if (svcId) return `${svcId}/full/400,/0/default.jpg`;
                 }
+                // Try body ID
+                if (body.id) return body.id;
             }
-
-            // 3. Items (IIIF v3)
-            if (json.items && json.items.length > 0) {
-                const canvas = json.items[0];
-                // Canvas thumbnail
-                if (canvas.thumbnail) {
-                    const t = Array.isArray(canvas.thumbnail) ? canvas.thumbnail[0] : canvas.thumbnail;
-                    const id = typeof t === 'string' ? t : (t['id'] || t['@id']);
-                    if (id) return id;
-                }
-
-                // Content Body
-                const body = canvas.items?.[0]?.items?.[0]?.body;
-                if (body) {
-                    // Try service
-                    let service = body.service;
-                    if (Array.isArray(service)) service = service[0];
-                    if (service) {
-                        const svcId = service['id'] || service['@id'] || (typeof service === 'string' ? service : null);
-                        if (svcId) return `${svcId}/full/400,/0/default.jpg`;
-                    }
-                    // Try body ID
-                    if (body.id) return body.id;
-                }
-            }
-        } catch (e) {
-            console.warn("Error parsing manifest", e);
         }
         return null;
     }
