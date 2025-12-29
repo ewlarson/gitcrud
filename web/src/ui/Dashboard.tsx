@@ -472,7 +472,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                             <select
                                 value={state.sort || "relevance"}
                                 onChange={(e) => setState(prev => ({ ...prev, sort: e.target.value, page: 1 }))}
-                                className="text-xs sm:text-sm rounded border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-indigo-500 py-1.5 pl-2 pr-8"
+                                className="text-xs sm:text-sm rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-indigo-500 py-1.5 pl-2 pr-8"
                             >
                                 <option value="relevance">Relevance</option>
                                 <option value="year_desc">Year (Newest)</option>
