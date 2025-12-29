@@ -1,9 +1,7 @@
-import React, { useEffect, useState } from "react";
-import { Resource, resourceToJson, REPEATABLE_STRING_FIELDS, Distribution } from "../aardvark/model";
+import React, { useEffect, useState, useCallback } from "react";
+import { Resource, Distribution } from "../aardvark/model";
 // GithubClient imports removed
-import { getDuckDbContext, queryResources, queryResourceById, saveDb, upsertResource, queryDistributionsForResource, countResources } from "../duckdb/duckdbClient";
-import { TabularEditor } from "./TabularEditor";
-import { TagInput } from "./TagInput";
+import { queryResourceById, upsertResource, queryDistributionsForResource, countResources } from "../duckdb/duckdbClient";
 import { ResourceList } from "./ResourceList";
 import { ImportPage } from "./ImportPage";
 import { ResourceEdit } from "./ResourceEdit";
@@ -94,58 +92,7 @@ export const App: React.FC = () => {
     refreshResourceCount();
   }, []);
 
-  // Load resource if view is edit and we have ID but no data
-  useEffect(() => {
-    const load = async () => {
-      if (view === "edit" && selectedId && (!editing || editing.id !== selectedId)) {
-        const r = await queryResourceById(selectedId);
-        if (r) {
-          const d = await queryDistributionsForResource(selectedId);
-          setEditing(r);
-          setEditingDistributions(d);
-        } else {
-          // Not found? go back
-          setUrlState(s => ({ ...s, view: "dashboard" }));
-        }
-      } else if (view === "create" && !editing) {
-        // Initialize empty
-        handleCreate(false); // don't set view, just data
-      }
-    };
-    load();
-  }, [view, selectedId, editing, setUrlState]);
-
-
-
-
-  async function handleSave(resource: Resource, distributions: Distribution[]) {
-    setIsSaving(true);
-    setSaveError(null);
-    try {
-      // Verify ID presence
-      if (!resource.id) throw new Error("ID is required");
-
-      await upsertResource(resource, distributions);
-      await refreshResourceCount();
-
-      setUrlState({ view: "dashboard" }); // Clear ID
-      setEditing(null);
-      setEditingDistributions([]);
-
-    } catch (e: any) {
-      console.error("Save failed", e);
-      setSaveError(e.message);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  const handleEditResource = async (id: string) => {
-    // Just set URL, the effect will load data
-    setUrlState({ view: "edit", id });
-  };
-
-  const handleCreate = (setView = true) => {
+  const handleCreate = useCallback((setView = true) => {
     const empty: Resource = {
       id: "",
       dct_title_s: "",
@@ -190,7 +137,60 @@ export const App: React.FC = () => {
     setEditingDistributions([]);
     if (setView) setUrlState({ view: "create" });
     setSaveError(null);
+  }, [setUrlState]);
+
+  // Load resource if view is edit and we have ID but no data
+  useEffect(() => {
+    const load = async () => {
+      if (view === "edit" && selectedId && (!editing || editing.id !== selectedId)) {
+        const r = await queryResourceById(selectedId);
+        if (r) {
+          const d = await queryDistributionsForResource(selectedId);
+          setEditing(r);
+          setEditingDistributions(d);
+        } else {
+          // Not found? go back
+          setUrlState(s => ({ ...s, view: "dashboard" }));
+        }
+      } else if (view === "create" && !editing) {
+        // Initialize empty
+        handleCreate(false); // don't set view, just data
+      }
+    };
+    load();
+  }, [view, selectedId, editing, setUrlState, handleCreate]);
+
+
+
+
+  async function handleSave(resource: Resource, distributions: Distribution[]) {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      // Verify ID presence
+      if (!resource.id) throw new Error("ID is required");
+
+      await upsertResource(resource, distributions);
+      await refreshResourceCount();
+
+      setUrlState({ view: "dashboard" }); // Clear ID
+      setEditing(null);
+      setEditingDistributions([]);
+
+    } catch (e: any) {
+      console.error("Save failed", e);
+      setSaveError(e.message);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const handleEditResource = async (id: string) => {
+    // Just set URL, the effect will load data
+    setUrlState({ view: "edit", id });
   };
+
+
 
   const handleReset = () => {
     // Reset to root with no params
@@ -317,9 +317,7 @@ export const App: React.FC = () => {
             {(view === "dashboard" || view === "list" || view === "gallery" || view === "map") && (
               <div className="flex flex-col h-full -m-6">
                 <Dashboard
-                  project={null}
                   onEdit={handleEditResource}
-                  onCreate={() => handleCreate(true)}
                   onSelect={(id) => setUrlState({ view: 'resource', id })}
                 />
               </div>
@@ -340,7 +338,6 @@ export const App: React.FC = () => {
                 resourceCount={resourceCount}
                 onEdit={handleEditResource}
                 onCreate={() => handleCreate(true)}
-                onRefreshProject={refreshResourceCount}
               />
             )}
 

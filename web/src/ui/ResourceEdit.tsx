@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Resource, REPEATABLE_STRING_FIELDS, SCALAR_FIELDS, Distribution } from "../aardvark/model";
+import { Resource, Distribution } from "../aardvark/model";
 import { TagInput } from "./TagInput";
 
 interface ResourceEditProps {
@@ -10,6 +10,17 @@ interface ResourceEditProps {
     isSaving: boolean;
     saveError: string | null;
 }
+
+const RenderSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <div className="mb-6 p-4 border border-gray-200 dark:border-slate-800 rounded bg-gray-50/50 dark:bg-slate-900/20">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-4 uppercase tracking-wider border-b border-gray-200 dark:border-slate-800 pb-1">
+            {title}
+        </h3>
+        <div className="grid grid-cols-1 gap-4">
+            {children}
+        </div>
+    </div>
+);
 
 export const ResourceEdit: React.FC<ResourceEditProps> = ({
     initialResource,
@@ -104,17 +115,6 @@ export const ResourceEdit: React.FC<ResourceEditProps> = ({
                 <option value="true">True</option>
                 <option value="false">False</option>
             </select>
-        </div>
-    );
-
-    const RenderSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
-        <div className="mb-6 p-4 border border-gray-200 dark:border-slate-800 rounded bg-gray-50/50 dark:bg-slate-900/20">
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-4 uppercase tracking-wider border-b border-gray-200 dark:border-slate-800 pb-1">
-                {title}
-            </h3>
-            <div className="grid grid-cols-1 gap-4">
-                {children}
-            </div>
         </div>
     );
 

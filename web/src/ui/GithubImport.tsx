@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GithubClient, GithubRepoRef } from '../github/client';
+import { GithubClient } from '../github/client';
 import { importJsonData, saveDb } from '../duckdb/duckdbClient';
 
 export const GithubImport: React.FC = () => {
@@ -16,7 +16,6 @@ export const GithubImport: React.FC = () => {
     const [isImporting, setIsImporting] = useState(false);
     const [importProgress, setImportProgress] = useState({ current: 0, total: 0, successes: 0, failures: 0 });
     const [errorLogs, setErrorLogs] = useState<{ path: string, error: string }[]>([]);
-    const [importError, setImportError] = useState<string | null>(null);
 
     const parseRepoUrl = (url: string): { owner: string; repo: string } | null => {
         try {
@@ -25,7 +24,7 @@ export const GithubImport: React.FC = () => {
             if (parts.length >= 2) {
                 return { owner: parts[0], repo: parts[1] };
             }
-        } catch (e) {
+        } catch {
             // try manual split if not full url
             const parts = url.split('/');
             if (parts.length === 2) return { owner: parts[0], repo: parts[1] };
@@ -37,7 +36,7 @@ export const GithubImport: React.FC = () => {
         setIsScanning(true);
         setScanError(null);
         setFoundFiles([]);
-        setImportError(null);
+
         setErrorLogs([]);
 
         const repoRef = parseRepoUrl(repoUrl);
@@ -107,7 +106,7 @@ export const GithubImport: React.FC = () => {
         if (foundFiles.length === 0) return;
 
         setIsImporting(true);
-        setImportError(null);
+
         setErrorLogs([]);
         setImportProgress({ current: 0, total: foundFiles.length, successes: 0, failures: 0 });
 

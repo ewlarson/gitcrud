@@ -4,11 +4,11 @@ import { Resource } from '../aardvark/model';
 interface GalleryViewProps {
     resources: Resource[];
     thumbnails: Record<string, string | null>;
-    onEdit: (id: string) => void;
+
     onSelect?: (id: string) => void;
 }
 
-export const GalleryView: React.FC<GalleryViewProps> = ({ resources, thumbnails, onEdit, onSelect }) => {
+export const GalleryView: React.FC<GalleryViewProps> = ({ resources, thumbnails, onSelect }) => {
     if (resources.length === 0) {
         return (
             <div className="flex h-64 items-center justify-center text-slate-500">

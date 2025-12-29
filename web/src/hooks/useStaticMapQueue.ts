@@ -1,9 +1,8 @@
-
 import { useState, useCallback, useRef } from "react";
 import { Resource } from "../aardvark/model";
 import { default as pLimit } from "p-limit";
 import { generateStaticMap } from "../services/StaticMapService";
-import { getStaticMap, upsertStaticMap, hasStaticMap } from "../duckdb/duckdbClient";
+import { getStaticMap, upsertStaticMap } from "../duckdb/duckdbClient";
 
 // OSM Usage Policy: Be nice.
 const limit = pLimit(2);
@@ -17,17 +16,6 @@ export function useStaticMapQueue() {
     const [mapUrls, setMapUrls] = useState<Record<string, string | null>>({});
     const processedRef = useRef<Set<string>>(new Set());
     const queueRef = useRef<Map<string, QueueItem>>(new Map());
-
-    const register = useCallback((id: string, resource: Resource) => {
-        if (processedRef.current.has(id)) return;
-        if (queueRef.current.has(id)) return;
-
-        // If we already have the URL in state, skip
-        if (mapUrls[id] !== undefined) return;
-
-        queueRef.current.set(id, { id, resource });
-        processQueue();
-    }, [mapUrls]);
 
     const processQueue = useCallback(() => {
         const pending = Array.from(queueRef.current.values());
@@ -66,6 +54,17 @@ export function useStaticMapQueue() {
             });
         });
     }, []);
+
+    const register = useCallback((id: string, resource: Resource) => {
+        if (processedRef.current.has(id)) return;
+        if (queueRef.current.has(id)) return;
+
+        // If we already have the URL in state, skip
+        if (mapUrls[id] !== undefined) return;
+
+        queueRef.current.set(id, { id, resource });
+        processQueue();
+    }, [mapUrls, processQueue]);
 
     return { mapUrls, register };
 }

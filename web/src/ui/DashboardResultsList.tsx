@@ -5,13 +5,13 @@ interface DashboardResultsListProps {
     resources: Resource[];
     thumbnails: Record<string, string | null>;
     mapUrls: Record<string, string | null>;
-    onEdit: (id: string) => void;
+
     onSelect?: (id: string) => void;
     page: number;
     pageSize?: number;
 }
 
-export const DashboardResultsList: React.FC<DashboardResultsListProps> = ({ resources, thumbnails, mapUrls, onEdit, onSelect, page = 1, pageSize = 20 }) => {
+export const DashboardResultsList: React.FC<DashboardResultsListProps> = ({ resources, thumbnails, mapUrls, onSelect, page = 1, pageSize = 20 }) => {
     return (
         <div className="space-y-4">
             {resources.map((r, index) => (

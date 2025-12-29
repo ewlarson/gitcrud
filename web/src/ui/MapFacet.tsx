@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { MapContainer, TileLayer, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -38,7 +38,6 @@ const SearchHereButton = ({ onClick }: { onClick: () => void }) => {
 
 const MapController = ({ onSearch }: { onSearch: (bbox: BBox) => void }) => {
     const map = useMapEvents({});
-    const [showButton, setShowButton] = useState(true);
 
     // We can show button only on move, or always. User said "Add a button to 'Search Here'".
     // So distinct action.

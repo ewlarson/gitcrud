@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { getFacetValues, FacetValueRequest } from '../duckdb/duckdbClient';
+import { getFacetValues } from '../duckdb/duckdbClient';
 
 interface FacetModalProps {
     field: string;

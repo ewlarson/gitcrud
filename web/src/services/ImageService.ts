@@ -92,7 +92,7 @@ export class ImageService {
 
         // Heuristic scan if no explicit key
         if (!manifestUrl) {
-            const allUrls = this.getAllUrls(refs);
+            const allUrls = this.getAllUrls();
             for (const url of allUrls) {
                 if (url.endsWith("/iiif3/manifest") || url.endsWith("/iiif/manifest") || url.endsWith("/manifest") || url.endsWith("manifest.json") || url.includes("/manifest")) {
                     manifestUrl = url;
@@ -284,7 +284,7 @@ export class ImageService {
         return rawHits.length > 0 ? rawHits : hits;
     }
 
-    private getAllUrls(refs: Record<string, string>): string[] {
+    private getAllUrls(): string[] {
         return this.distributions.map(d => d.url).filter(Boolean);
     }
 }

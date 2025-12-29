@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Resource } from '../aardvark/model';
-import { queryResourceById, querySimilarResources, ensureEmbeddings, getSearchNeighbors, FacetedSearchRequest } from '../duckdb/duckdbClient';
+import { queryResourceById, querySimilarResources, getSearchNeighbors, FacetedSearchRequest } from '../duckdb/duckdbClient';
 import { MapContainer, TileLayer, Rectangle } from 'react-leaflet';
 import { ResourceViewer } from './ResourceViewer';
 import { Link } from './Link';
 import 'leaflet/dist/leaflet.css';
 import { LatLngBoundsExpression } from 'leaflet';
 
-// ... (existing imports)
-
 
 interface ResourceShowProps {
     id: string;
+
     onBack?: () => void;
 }
 
@@ -57,17 +56,17 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
     );
 };
 
-export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
+export const ResourceShow: React.FC<ResourceShowProps> = ({ id }) => {
     const [resource, setResource] = useState<Resource | null>(null);
     const [similarResources, setSimilarResources] = useState<Resource[]>([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    // const [error, setError] = useState<string | null>(null); // Unused
     const [pagination, setPagination] = useState<{ prevId?: string, nextId?: string, position: number, total: number }>({ position: 0, total: 0 });
 
     useEffect(() => {
         const load = async () => {
             setLoading(true);
-            setError(null);
+            // setError(null);
             try {
                 const r = await queryResourceById(id);
                 setResource(r);
@@ -122,7 +121,8 @@ export const ResourceShow: React.FC<ResourceShowProps> = ({ id, onBack }) => {
                     getSearchNeighbors(req, id).then(setPagination);
                 }
             } catch (e) {
-                setError("Failed to load resource");
+                // setError("Failed to load resource");
+                console.error("Failed to load resource", e);
             } finally {
                 setLoading(false);
             }

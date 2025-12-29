@@ -1,5 +1,5 @@
 import { getDistributionsForResource, upsertThumbnail } from "../duckdb/duckdbClient";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Resource, Distribution } from "../aardvark/model";
 import { ImageService } from "../services/ImageService";
 import { default as pLimit } from "p-limit";
@@ -19,17 +19,6 @@ export function useThumbnailQueue() {
 
     // A queue map to dedup requests
     const queueRef = useRef<Map<string, QueueItem>>(new Map());
-
-    // Function to register an item for thumbnail fetching
-    const register = useCallback((id: string, resource: Resource, distributions: Distribution[] = []) => {
-        if (processedRef.current.has(id)) return;
-        if (queueRef.current.has(id)) return; // Already queued
-
-        queueRef.current.set(id, { id, resource, distributions });
-
-        // Trigger processing
-        processQueue();
-    }, []);
 
     const processQueue = useCallback(() => {
         // We process all pending items in the map using p-limit
@@ -73,6 +62,17 @@ export function useThumbnailQueue() {
             });
         });
     }, []);
+
+    // Function to register an item for thumbnail fetching
+    const register = useCallback((id: string, resource: Resource, distributions: Distribution[] = []) => {
+        if (processedRef.current.has(id)) return;
+        if (queueRef.current.has(id)) return; // Already queued
+
+        queueRef.current.set(id, { id, resource, distributions });
+
+        // Trigger processing
+        processQueue();
+    }, [processQueue]);
 
     return { thumbnails, register };
 }

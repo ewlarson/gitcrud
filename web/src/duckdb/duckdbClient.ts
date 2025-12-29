@@ -74,7 +74,7 @@ export async function getDuckDbContext(): Promise<DuckDbContext | null> {
       } catch (err: any) {
         console.warn("Used existing file but ATTACH failed (corruption?). Starting fresh.", err);
         // Corruption? Drop file and retry (creates new)
-        try { await db.dropFile(DB_FILENAME); } catch { }
+        try { await db.dropFile(DB_FILENAME); } catch { /* ignore */ }
         try {
           await conn.query(`ATTACH '${DB_FILENAME}'`);
           attached = true;
@@ -186,7 +186,7 @@ async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
       console.log("Migrating resources_image_service: Dropping old table");
       await conn.query(`DROP TABLE resources_image_service`);
     }
-  } catch (e) { /* Table likely doesn't exist, ignore */ }
+  } catch { /* Table likely doesn't exist, ignore */ }
 
   await conn.query(`CREATE TABLE IF NOT EXISTS resources_image_service (id VARCHAR PRIMARY KEY, data VARCHAR, last_updated BIGINT)`);
 
@@ -198,7 +198,7 @@ async function ensureSchema(conn: duckdb.AsyncDuckDBConnection) {
       console.log("Migrating static_maps: Dropping old table");
       await conn.query(`DROP TABLE static_maps`);
     }
-  } catch (e) { /* Table likely doesn't exist, ignore */ }
+  } catch { /* Table likely doesn't exist, ignore */ }
 
   await conn.query(`CREATE TABLE IF NOT EXISTS static_maps (id VARCHAR PRIMARY KEY, data VARCHAR, last_updated BIGINT)`);
 
@@ -309,7 +309,7 @@ async function fetchResourcesByIds(conn: duckdb.AsyncDuckDBConnection, ids: stri
         const blob = new Blob([bytes], { type: 'image/jpeg' });
         thumbMap.set(r.id, URL.createObjectURL(blob));
       }
-    } catch (e) {
+    } catch {
       console.warn("Failed to decode thumb for " + r.id);
     }
   }
@@ -387,7 +387,7 @@ export async function getThumbnail(id: string): Promise<string | null> {
 }
 
 export function compileFacetedWhere(req: FacetedSearchRequest, omitField: string | null = null, emitGlobal: boolean = true): { sql: string } {
-  let clauses: string[] = ["1=1"];
+  const clauses: string[] = ["1=1"];
 
   if (emitGlobal && req.q && req.q.trim()) {
     const k = req.q.replace(/'/g, "''");
@@ -727,10 +727,7 @@ export async function queryResourceById(id: string): Promise<Resource | null> {
 
 // *** Vector Embedding Engine ***
 
-interface EmbeddingTask {
-  id: string;
-  text: string;
-}
+
 
 let embeddingWorker: Worker | null = null;
 const embeddingCallbacks = new Map<string, (success: boolean) => void>();
@@ -776,7 +773,7 @@ export async function ensureEmbeddings(priorityId?: string): Promise<void> {
   if (!ctx) return;
   const { conn } = ctx;
 
-  let idsToProcess: string[] = [];
+  const idsToProcess: string[] = [];
   let priorityPromise: Promise<void> | null = null;
 
   // 1. Check priorityId
@@ -788,7 +785,7 @@ export async function ensureEmbeddings(priorityId?: string): Promise<void> {
       // Register callback to await completion
       priorityPromise = new Promise((resolve) => {
         // The worker calls callback(success: boolean)
-        embeddingCallbacks.set(priorityId, (_success) => resolve());
+        embeddingCallbacks.set(priorityId, () => resolve());
       });
     }
   }
@@ -945,7 +942,7 @@ export async function importCsv(file: File): Promise<{ success: boolean, message
     const findCsvCol = (targetField: string): string | undefined => {
       if (csvHeaders.includes(targetField)) return targetField;
       // Search mapping
-      const mappedEntry = Object.entries(CSV_HEADER_MAPPING).find(([k, v]) => v === targetField);
+      const mappedEntry = Object.entries(CSV_HEADER_MAPPING).find(([, v]) => v === targetField);
       if (mappedEntry && csvHeaders.includes(mappedEntry[0])) return mappedEntry[0];
       return undefined;
     };
@@ -1205,7 +1202,7 @@ export async function upsertResource(resource: Resource, distributions: Distribu
     if (field === "dct_references_s") continue;
 
     // @ts-ignore
-    let val = resource[field];
+    const val = resource[field];
 
     if (val === undefined || val === null) {
       continue;
@@ -1484,9 +1481,8 @@ export async function facetedSearch(req: FacetedSearchRequest): Promise<FacetedS
 
   if (req.q && req.q.trim()) {
     useGlobal = true;
-    const k = req.q.replace(/'/g, "''");
     // Use ILIKE on flattened content - robust and fast enough (Avoiding FTS sync issues)
-    globalClauses.push(`id IN (SELECT id FROM search_index WHERE content ILIKE '%${k}%')`);
+    globalClauses.push(`id IN (SELECT id FROM search_index WHERE content ILIKE '%${req.q.replace(/'/g, "''")}%')`);
   }
 
   if (req.bbox) {
@@ -1685,7 +1681,7 @@ export async function facetedSearch(req: FacetedSearchRequest): Promise<FacetedS
   } finally {
     // Cleanup Temp Table
     if (useGlobal) {
-      try { await conn.query(`DROP TABLE IF EXISTS ${globalHitsTable}`); } catch { }
+      try { await conn.query(`DROP TABLE IF EXISTS ${globalHitsTable}`); } catch { /* ignore */ }
     }
   }
 }

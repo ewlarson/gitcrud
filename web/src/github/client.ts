@@ -61,7 +61,7 @@ export class GithubClient {
 
 
 
-  async fetchTree(sha: string, recursive: boolean = false): Promise<{ path: string; sha: string; type: string }[]> {
+  async fetchTree(): Promise<{ path: string; sha: string; type: string }[]> {
     // This method needs repo context to work, but the current class structure assumes methods work on any repo
     // if passed in via GithubRepoRef. The previous `fetchRecursiveTree` took `repoRef`.
     // The previous edit introduced a broken placeholder. 
@@ -169,7 +169,7 @@ export class GithubClient {
         )}?ref=${encodeURIComponent(config.branch)}`
       );
       return "present";
-    } catch (err) {
+    } catch {
       return "missing";
     }
   }

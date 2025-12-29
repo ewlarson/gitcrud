@@ -5,9 +5,7 @@ import { Resource } from "../aardvark/model";
 const TILE_SIZE = 256;
 const MAX_ZOOM = 19;
 
-// Default "Null" Map if no bbox
-const DEFAULT_CENTER = { lat: 0, lng: 0 };
-const DEFAULT_ZOOM = 1;
+
 
 interface BBox {
     minLat: number;
@@ -53,8 +51,6 @@ function latLngToPoint(lat: number, lng: number, zoom: number) {
 }
 
 function getBestZoom(bbox: BBox, width: number, height: number): number {
-    const latDiff = bbox.maxLat - bbox.minLat;
-    const lngDiff = bbox.maxLng - bbox.minLng;
     // Simple approximation
     for (let z = MAX_ZOOM; z >= 0; z--) {
         const p1 = latLngToPoint(bbox.minLat, bbox.minLng, z);
@@ -122,7 +118,7 @@ export async function generateStaticMap(resource: Resource, width = 200, height 
                 const destX = (tx * TILE_SIZE) - viewMinX;
                 const destY = (ty * TILE_SIZE) - viewMinY;
                 ctx!.drawImage(img, destX, destY);
-            }).catch(e => {
+            }).catch(() => {
                 // failed tile, ignore
             });
             promises.push(p);

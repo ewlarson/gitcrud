@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Resource } from '../aardvark/model';
 
 
@@ -22,7 +22,6 @@ interface ViewerConfig {
 }
 
 export const ResourceViewer: React.FC<ResourceViewerProps> = ({ resource }) => {
-    const viewerRef = useRef<HTMLDivElement>(null);
     const [config, setConfig] = useState<ViewerConfig | null>(null);
 
     // 1. Determine Viewer Configuration from Resource
@@ -129,6 +128,7 @@ export const ResourceViewer: React.FC<ResourceViewerProps> = ({ resource }) => {
                     const mod = await import('@geoblacklight/frontend/app/javascript/geoblacklight/controllers/clover_viewer_controller.js');
                     const { createRoot } = await import('react-dom/client');
 
+                    // eslint-disable-next-line react-hooks/unsupported-syntax
                     class FixedCloverController extends mod.default {
                         root: any;
 

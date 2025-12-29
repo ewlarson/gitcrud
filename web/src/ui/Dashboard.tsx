@@ -1,10 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { Resource } from "../aardvark/model";
 import {
-    FacetedSearchRequest, facetedSearch, exportFilteredResults,
-    SuggestResult
+    FacetedSearchRequest, facetedSearch, exportFilteredResults
 } from "../duckdb/duckdbClient";
-import { ProjectConfig } from "../github/client";
 import { useUrlState } from "../hooks/useUrlState";
 import { useThumbnailQueue } from "../hooks/useThumbnailQueue";
 import { useStaticMapQueue } from "../hooks/useStaticMapQueue";
@@ -20,9 +18,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { FacetModal } from "./FacetModal";
 
 interface DashboardProps {
-    project: ProjectConfig | null;
     onEdit: (id: string) => void;
-    onCreate: () => void;
     onSelect?: (id: string) => void;
 }
 
@@ -40,7 +36,7 @@ const FACETS = [
     { field: "gbl_georeferenced_b", label: "Georeferenced", limit: 5 },
 ];
 
-export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate, onSelect }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onEdit, onSelect }) => {
     const [resources, setResources] = useState<Resource[]>([]);
     const [facetsData, setFacetsData] = useState<Record<string, { value: string; count: number }[]>>({});
     const [total, setTotal] = useState(0);
@@ -98,7 +94,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                 }
                 return params;
             },
-            fromUrl: (params, _pathname) => {
+            fromUrl: (params) => {
                 const q = params.get("q") || "";
                 const page = Number(params.get("page")) || 1;
                 const sort = params.get("sort") || "relevance";
@@ -157,7 +153,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
 
     const { q, page, facets: selectedFacets } = state;
 
-    // Local input state for debounce removed (moved to App)
 
     const pageSize = 20;
 
@@ -226,7 +221,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
         } finally {
             setLoading(false);
         }
-    }, [q, activeFilters, page, state.sort, state.bbox, state.yearRange]);
+    }, [q, activeFilters, page, state.sort, state.bbox]);
 
     useEffect(() => {
         fetchData();
@@ -266,9 +261,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
             };
         });
     };
-
-    const removeQuery = () => setState(s => ({ ...s, q: "", page: 1 }));
-    // const removeFacet = (field: string, val: string) => toggleFacet(field, val); // No longer simple reuse
 
     const handleExport = async (format: 'json' | 'csv') => {
         setIsExporting(true);
@@ -315,39 +307,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
         return undefined;
     })() : undefined;
 
-    const handleAutosuggest = (val: string, suggestion?: SuggestResult) => {
-        if (suggestion) {
-            let field = "";
-            switch (suggestion.type) {
-                case 'Place': field = 'dct_spatial_sm'; break;
-                case 'Subject': field = 'dct_subject_sm'; break;
-                case 'Theme': field = 'dcat_theme_sm'; break;
-                case 'Publisher': field = 'dct_publisher_sm'; break;
-                case 'Creator': field = 'dct_creator_sm'; break;
-                // Title and Keyword remain as text search (q)
-            }
-
-            if (field) {
-                // Apply Facet Filter and CLEAR any existing query text to avoid double filtering
-                setState(prev => {
-                    const currentFacets = prev.facets[field] || [];
-                    if (!currentFacets.includes(suggestion.text)) {
-                        return {
-                            ...prev,
-                            facets: { ...prev.facets, [field]: [...currentFacets, suggestion.text] },
-                            q: "", // Clear text to rely on strict facet
-                            page: 1
-                        };
-                    }
-                    return { ...prev, q: "", page: 1 }; // Even if already selected, clear text
-                });
-                return;
-            }
-        }
-
-        // Default: Text Search
-        setState(prev => ({ ...prev, q: val, page: 1 }));
-    };
 
     return (
         <div className="flex bg-gray-50 dark:bg-slate-900 h-full transition-colors duration-200">
@@ -567,9 +526,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ project, onEdit, onCreate,
                         {loading ? (
                             <div className="flex h-64 items-center justify-center text-slate-500">Loading...</div>
                         ) : state.view === 'gallery' ? (
-                            <GalleryView resources={resources} thumbnails={thumbnails} onEdit={onEdit} onSelect={onSelect} />
+                            <GalleryView resources={resources} thumbnails={thumbnails} onSelect={onSelect} />
                         ) : (
-                            <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onEdit={onEdit} onSelect={onSelect} page={page} />
+                            <DashboardResultsList resources={resources} thumbnails={thumbnails} mapUrls={mapUrls} onSelect={onSelect} page={page} />
                         )}
                     </div>
                 )}
@@ -618,6 +577,7 @@ const FacetSection: React.FC<{
 
     useEffect(() => {
         if (hasActiveSelection) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setIsOpen(true);
         }
     }, [hasActiveSelection]);

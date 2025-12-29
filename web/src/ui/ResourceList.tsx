@@ -8,15 +8,11 @@ interface ResourceListProps {
     resourceCount: number;
     onEdit: (id: string) => void;
     onCreate: () => void;
-    onRefreshProject: () => void;
 }
 
 export const ResourceList: React.FC<ResourceListProps> = ({
-    project,
-    resourceCount,
     onEdit,
     onCreate,
-    onRefreshProject,
 }) => {
     const [resources, setResources] = useState<Resource[]>([]);
     const [total, setTotal] = useState(0);
@@ -25,7 +21,7 @@ export const ResourceList: React.FC<ResourceListProps> = ({
     // Search/Sort/Page State
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(20);
+    const pageSize = 20;
     const [sortBy, setSortBy] = useState("id");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
@@ -59,7 +55,7 @@ export const ResourceList: React.FC<ResourceListProps> = ({
         } finally {
             setLoading(false);
         }
-    }, [page, pageSize, sortBy, sortOrder, debouncedSearch, project, resourceCount]); // re-fetch if count changes
+    }, [page, pageSize, sortBy, sortOrder, debouncedSearch]);
 
 
     useEffect(() => {

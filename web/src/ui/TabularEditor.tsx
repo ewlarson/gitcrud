@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { executeQuery, queryResources } from "../duckdb/duckdbClient";
+import { queryResources } from "../duckdb/duckdbClient";
 import { Resource } from "../aardvark/model";
-import { resourceFromRow } from "../aardvark/mapping";
 
 interface TabularEditorProps {
   onSelectResource: (resource: Resource) => void;
@@ -19,7 +18,7 @@ export const TabularEditor: React.FC<TabularEditorProps> = ({
 
   useEffect(() => {
     loadTableData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function loadTableData() {
@@ -171,4 +170,3 @@ export const TabularEditor: React.FC<TabularEditorProps> = ({
     </div>
   );
 };
-
